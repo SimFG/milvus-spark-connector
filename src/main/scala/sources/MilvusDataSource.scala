@@ -12,7 +12,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import com.zilliz.spark.connector.{DataTypeUtil, MilvusClient, MilvusOption}
 import com.zilliz.spark.connector.sources.MilvusTable
 
-case class Milvus() extends TableProvider with DataSourceRegister {
+case class MilvusDataSource() extends TableProvider with DataSourceRegister {
   override def getTable(
       schema: StructType,
       partitioning: Array[Transform],

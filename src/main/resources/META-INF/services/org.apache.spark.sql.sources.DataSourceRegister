@@ -1,1 +1,2 @@
-com.zilliz.spark.connector.sources.Milvus
+com.zilliz.spark.connector.sources.MilvusDataSource
+com.zilliz.spark.connector.binlog.MilvusBinlogDataSource

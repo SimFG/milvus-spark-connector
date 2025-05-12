@@ -37,7 +37,13 @@ lazy val root = (project in file("."))
       scalapbCompilerPlugin,
       sparkCore,
       sparkSql,
-      sparkCatalyst
+      sparkCatalyst,
+      parquetCommon,
+      parquetColumn,
+      parquetHadoop,
+      hadoopCommon,
+      jacksonScala,
+      jacksonDatabind
     ),
     Compile / PB.protoSources += baseDirectory.value / "milvus-proto/proto",
     Compile / PB.targets := Seq(
