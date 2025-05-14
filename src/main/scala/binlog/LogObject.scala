@@ -24,10 +24,20 @@ object Constants {
   // MagicNumber used in binlog
   val MagicNumber: Int = 0xfffabc
   val Endian: ByteOrder = ByteOrder.LITTLE_ENDIAN
+
+  // reader
+  val EmptyByteBuffer = ByteBuffer.allocate(0)
+
+  // delete log reader
   val DeleteTimestampColumnName = "ts"
   val DeletePkTypeColumnName = "pkType"
   val DeletePkColumnName = "pk"
-  val EmptyByteBuffer = ByteBuffer.allocate(0)
+
+  // reader param constant
+  val logPathParamName = "path"
+  val logReaderTypeParamName = "readerType"
+  val logReaderTypeInsert = "insert"
+  val logReaderTypeDelete = "delete"
 
   def readMagicNumber(buffer: ByteBuffer) = {
     val num = buffer.getInt()
@@ -156,5 +166,16 @@ class DeleteEventData(
 
   override def toString: String = {
     s"DeleteEventData(baseEventData: $baseEventData, pks: $pks, timestamps: $timestamps, pkType: $pkType)"
+  }
+}
+
+class InsertEventData(
+    val baseEventData: BaseEventData,
+    var datas: ArrayBuffer[String],
+    var timestamp: Long,
+    var dataType: DataType
+) {
+  override def toString: String = {
+    s"InsertEventData(baseEventData: $baseEventData, datas: $datas, timestamp: $timestamp, dataType: $dataType)"
   }
 }

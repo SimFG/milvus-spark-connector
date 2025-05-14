@@ -15,14 +15,15 @@ import org.apache.parquet.hadoop.util.HadoopInputFile
 import org.apache.parquet.hadoop.ParquetFileReader
 import org.apache.parquet.io.{ColumnIOFactory, MessageColumnIO, RecordReader}
 import org.apache.parquet.schema.{MessageType, PrimitiveType, Type}
-// import org.apache.spark.internal.Logging
+import org.apache.spark.internal.Logging
 
 /** ParquetPayloadReader reads and parses parquet format data from a byte array.
   * This implementation aligns with the Go implementation's
   * ParquetPayloadReader.
   */
-class ParquetPayloadReader(data: Array[Byte]) extends AutoCloseable {
-  // with Logging {
+class ParquetPayloadReader(data: Array[Byte])
+    extends AutoCloseable // {
+    with Logging {
 
   private val hadoopConfig: Configuration = new Configuration()
   private var tempFile: Option[File] = None
@@ -67,21 +68,20 @@ class ParquetPayloadReader(data: Array[Byte]) extends AutoCloseable {
       // logDebug(s"Parquet schema: ${schema.getOrElse("N/A")}")
 
       // Print field names for debugging
-      schema.foreach { msgType =>
-        val fields = msgType.getFields
-        if (fields.isEmpty) {
-          // logWarning("Parquet schema has no fields")
-        } else {
+      // schema.foreach { msgType =>
+      //   val fields = msgType.getFields
+      //   if (fields.isEmpty) {
+      // logWarning("Parquet schema has no fields")
+      // } else {
 
-          // logDebug("Schema field names:")
-          fields.forEach { field =>
-            // logDebug(
-            //   s"  Field ${msgType.getFieldIndex(field.getName)}: ${field.getName} (${field.asPrimitiveType().getPrimitiveTypeName})"
-            // )
-          }
-
-        }
-      }
+      // logDebug("Schema field names:")
+      // fields.forEach { field =>
+      // logDebug(
+      //   s"  Field ${msgType.getFieldIndex(field.getName)}: ${field.getName} (${field.asPrimitiveType().getPrimitiveTypeName})"
+      // )
+      // }
+      // }
+      // }
     }.recover {
       case e: IOException =>
         // logError(s"Error initializing Parquet reader: ${e.getMessage}", e)
@@ -97,11 +97,9 @@ class ParquetPayloadReader(data: Array[Byte]) extends AutoCloseable {
           s"Unexpected error parsing Parquet: ${e.getMessage}",
           e
         )
-    }.get // Re-throw the exception if initialization failed
+    }.get
   }
 
-  /** Cleans up temporary files created during the reading process.
-    */
   private def cleanupTempFile(): Unit = {
     tempFile.filter(_.exists()).foreach { file =>
       Try {
@@ -128,13 +126,6 @@ class ParquetPayloadReader(data: Array[Byte]) extends AutoCloseable {
     cleanupTempFile()
   }
 
-  /** Gets boolean values from the payload for the specified column.
-    *
-    * @param columnIndex
-    *   The column index
-    * @return
-    *   List of boolean values
-    */
   def getBooleanFromPayload(columnIndex: Int): List[Boolean] = {
     val values = new ListBuffer[Boolean]()
     processParquetFile((group, schema) => {
@@ -152,13 +143,6 @@ class ParquetPayloadReader(data: Array[Byte]) extends AutoCloseable {
     values.toList
   }
 
-  /** Gets int8 (byte) values from the payload for the specified column.
-    *
-    * @param columnIndex
-    *   The column index
-    * @return
-    *   List of byte values
-    */
   def getInt8FromPayload(columnIndex: Int): List[Byte] = {
     val values = new ListBuffer[Byte]()
     processParquetFile((group, schema) => {
@@ -177,13 +161,6 @@ class ParquetPayloadReader(data: Array[Byte]) extends AutoCloseable {
     values.toList
   }
 
-  /** Gets int16 (short) values from the payload for the specified column.
-    *
-    * @param columnIndex
-    *   The column index
-    * @return
-    *   List of short values
-    */
   def getInt16FromPayload(columnIndex: Int): List[Short] = {
     val values = new ListBuffer[Short]()
     processParquetFile((group, schema) => {
@@ -202,13 +179,6 @@ class ParquetPayloadReader(data: Array[Byte]) extends AutoCloseable {
     values.toList
   }
 
-  /** Gets int32 (integer) values from the payload for the specified column.
-    *
-    * @param columnIndex
-    *   The column index
-    * @return
-    *   List of integer values
-    */
   def getInt32FromPayload(columnIndex: Int): List[Int] = {
     val values = new ListBuffer[Int]()
     processParquetFile((group, schema) => {
@@ -226,13 +196,6 @@ class ParquetPayloadReader(data: Array[Byte]) extends AutoCloseable {
     values.toList
   }
 
-  /** Gets int64 (long) values from the payload for the specified column.
-    *
-    * @param columnIndex
-    *   The column index
-    * @return
-    *   List of long values
-    */
   def getInt64FromPayload(columnIndex: Int): List[Long] = {
     val values = new ListBuffer[Long]()
     processParquetFile((group, schema) => {
@@ -278,13 +241,6 @@ class ParquetPayloadReader(data: Array[Byte]) extends AutoCloseable {
     values.toList
   }
 
-  /** Gets float32 (float) values from the payload for the specified column.
-    *
-    * @param columnIndex
-    *   The column index
-    * @return
-    *   List of float values
-    */
   def getFloat32FromPayload(columnIndex: Int): List[Float] = {
     val values = new ListBuffer[Float]()
     processParquetFile((group, schema) => {
@@ -302,13 +258,6 @@ class ParquetPayloadReader(data: Array[Byte]) extends AutoCloseable {
     values.toList
   }
 
-  /** Gets float64 (double) values from the payload for the specified column.
-    *
-    * @param columnIndex
-    *   The column index
-    * @return
-    *   List of double values
-    */
   def getFloat64FromPayload(columnIndex: Int): List[Double] = {
     val values = new ListBuffer[Double]()
     processParquetFile((group, schema) => {
@@ -326,13 +275,6 @@ class ParquetPayloadReader(data: Array[Byte]) extends AutoCloseable {
     values.toList
   }
 
-  /** Gets string values from the payload for the specified column.
-    *
-    * @param columnIndex
-    *   The column index
-    * @return
-    *   List of string values
-    */
   def getStringFromPayload(columnIndex: Int): List[String] = {
     val values = new ListBuffer[String]()
     processParquetFile((group, schema) => {
@@ -372,13 +314,6 @@ class ParquetPayloadReader(data: Array[Byte]) extends AutoCloseable {
     values.toList
   }
 
-  /** Gets binary values from the payload for the specified column.
-    *
-    * @param columnIndex
-    *   The column index
-    * @return
-    *   List of binary values as byte arrays
-    */
   def getBinaryFromPayload(columnIndex: Int): List[Array[Byte]] = {
     val values = new ListBuffer[Array[Byte]]()
     processParquetFile((group, schema) => {
@@ -399,46 +334,28 @@ class ParquetPayloadReader(data: Array[Byte]) extends AutoCloseable {
     values.toList
   }
 
-  /** Gets float vector values from the payload for the specified column.
-    *
-    * @param columnIndex
-    *   The column index
-    * @return
-    *   List of float vectors (as float arrays)
-    */
   def getFloatVectorFromPayload(columnIndex: Int): List[Array[Float]] = {
     // Note: This implementation assumes that the float vector is stored as a LIST of FLOATs
     val values = new ListBuffer[Array[Float]]()
     // This requires custom implementation based on the specific Parquet schema used
     // TODO: Implement for specific use cases as needed
+    processParquetFile((group, schema) => {
+      val dim =
+        schema.getColumns().get(0).getPrimitiveType().getTypeLength() / 4
+      val floatVector = new Array[Float](dim)
+      val buffer = group.getBinary(columnIndex, 0).toByteBuffer
+      buffer.order(Constants.Endian)
+      buffer.asFloatBuffer().get(floatVector)
+      values += floatVector
+    })
     values.toList
   }
 
-  /** Gets binary vector values from the payload for the specified column.
-    *
-    * @param columnIndex
-    *   The column index
-    * @return
-    *   List of binary vectors (as byte arrays)
-    */
   def getBinaryVectorFromPayload(columnIndex: Int): List[Array[Byte]] = {
     // Note: This implementation assumes that the binary vector is stored as a BINARY field
     getBinaryFromPayload(columnIndex)
   }
 
-  /** Checks if a column access is valid for the given schema and group.
-    *
-    * @param group
-    *   The group to check
-    * @param schema
-    *   The schema to check against
-    * @param columnIndex
-    *   The column index to access
-    * @param expectedType
-    *   The expected primitive type
-    * @return
-    *   True if the access is valid
-    */
   private def isValidColumnAccess(
       group: Group,
       schema: MessageType,
@@ -495,11 +412,6 @@ class ParquetPayloadReader(data: Array[Byte]) extends AutoCloseable {
     }.getOrElse(false) // Default to false in case of any exception
   }
 
-  /** Processes the Parquet file and applies the specified record processor.
-    *
-    * @param processor
-    *   The record processor to apply to each Parquet record
-    */
   private def processParquetFile(
       processor: (Group, MessageType) => Unit
   ): Unit = {

@@ -31,21 +31,42 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.unsafe.types.UTF8String
 
 // 1. DataSourceRegister and TableProvider
-class MilvusBinlogDataSource extends DataSourceRegister with TableProvider {
+class MilvusBinlogDataSource
+    extends DataSourceRegister
+    with TableProvider
+    with Logging {
   override def shortName(): String = "milvusbinlog"
 
   override def inferSchema(options: CaseInsensitiveStringMap): StructType = {
     // Schema is fixed: a single column "values" of Array[String]
-    StructType(
-      Seq(
-        org.apache.spark.sql.types
-          .StructField("pk", StringType, true),
-        org.apache.spark.sql.types
-          .StructField("timestamp", LongType, true),
-        org.apache.spark.sql.types
-          .StructField("pk_type", IntegerType, true)
-      )
+    logInfo(
+      s"inferSchema options, keys: ${options.keySet()}, values: ${options.values()}"
     )
+    val readerType = options.get(Constants.logReaderTypeParamName)
+    if (readerType == null) {
+      throw new IllegalArgumentException(
+        s"Option '${Constants.logReaderTypeParamName}' is required for milvusbinlog format."
+      )
+    }
+    readerType match {
+      case Constants.logReaderTypeInsert | Constants.logReaderTypeDelete => {
+        StructType(
+          Seq(
+            org.apache.spark.sql.types
+              .StructField("data", StringType, true),
+            org.apache.spark.sql.types
+              .StructField("timestamp", LongType, true),
+            org.apache.spark.sql.types
+              .StructField("data_type", IntegerType, true)
+          )
+        )
+      }
+      case _ => {
+        throw new IllegalArgumentException(
+          s"Unsupported reader type: $readerType"
+        )
+      }
+    }
   }
 
   override def getTable(
@@ -53,6 +74,7 @@ class MilvusBinlogDataSource extends DataSourceRegister with TableProvider {
       partitioning: Array[Transform],
       properties: java.util.Map[String, String]
   ): Table = {
+    logInfo(s"getTable schema, properties: $properties")
     val path = properties.get("path")
     if (path == null) {
       throw new IllegalArgumentException(
@@ -78,21 +100,17 @@ class MilvusBinlogTable(
   override def name(): String = s"MilvusBinlogTable"
 
   override def schema(): StructType = {
-    // If a schema is provided by user, use it, otherwise infer.
-    // For this example, we always use the fixed inferred schema.
-
-    // delete data column
     Option(customSchema)
       .filter(_.fields.nonEmpty)
       .getOrElse(
         StructType(
           Seq(
             org.apache.spark.sql.types
-              .StructField("pk", StringType, true),
+              .StructField("data", StringType, true),
             org.apache.spark.sql.types
               .StructField("timestamp", LongType, true),
             org.apache.spark.sql.types
-              .StructField("pk_type", IntegerType, true)
+              .StructField("data_type", IntegerType, true)
           )
         )
       )
@@ -165,7 +183,7 @@ class MilvusBinlogScan(schema: StructType, options: CaseInsensitiveStringMap)
 case class MilvusBinlogInputPartition(filePath: String) extends InputPartition
 
 case class MilvusBinlogReaderOptions(
-    delimiter: String // TODO temp test purpose
+    readerType: String // TODO temp test purpose
 ) extends Serializable
 
 // 5. PartitionReaderFactory
@@ -173,7 +191,7 @@ class MilvusBinlogPartitionReaderFactory(options: CaseInsensitiveStringMap)
     extends PartitionReaderFactory {
 
   private val readerOptions = MilvusBinlogReaderOptions(
-    options.get("delimiter")
+    options.get(Constants.logReaderTypeParamName)
   )
 
   override def createReader(
@@ -190,8 +208,7 @@ class MilvusBinlogPartitionReader(
     options: MilvusBinlogReaderOptions
 ) extends PartitionReader[InternalRow]
     with Logging {
-  // TODO event type
-  private val delimiter: String = options.delimiter
+  private val readerType: String = options.readerType
 
   private val conf =
     new Configuration() // Use Spark's Hadoop conf for HDFS etc.
@@ -203,9 +220,48 @@ class MilvusBinlogPartitionReader(
   private val descriptorEvent = LogReader.readDescriptorEvent(inputStream)
   private val dataType = descriptorEvent.data.payloadDataType
   private var deleteEvent: DeleteEventData = null
+  private var insertEvent: InsertEventData = null
   private var currentIndex: Int = 0
 
   override def next(): Boolean = {
+    readerType match {
+      case Constants.logReaderTypeInsert => readInsertEvent()
+      case Constants.logReaderTypeDelete => readDeleteEvent()
+      case _ =>
+        throw new IllegalArgumentException(
+          s"Unsupported reader type: $readerType"
+        )
+    }
+  }
+
+  private def readInsertEvent(): Boolean = {
+    if (insertEvent != null && currentIndex == insertEvent.datas.length - 1) {
+      insertEvent = null
+      currentIndex = 0
+    }
+    if (insertEvent == null) {
+      insertEvent =
+        LogReader.readInsertEvent(inputStream, objectMapper, dataType)
+    } else {
+      currentIndex += 1
+    }
+
+    insertEvent != null
+  }
+
+  private def getInsertInternalRow(): InternalRow = {
+    val data = insertEvent.datas(currentIndex)
+    val timestamp = insertEvent.timestamp
+    val dataType = insertEvent.dataType.value
+
+    InternalRow(
+      UTF8String.fromString(data),
+      timestamp,
+      dataType
+    )
+  }
+
+  private def readDeleteEvent(): Boolean = {
     if (deleteEvent != null && currentIndex == deleteEvent.pks.length - 1) {
       deleteEvent = null
       currentIndex = 0
@@ -220,17 +276,28 @@ class MilvusBinlogPartitionReader(
     deleteEvent != null
   }
 
+  private def getDeleteInternalRow(): InternalRow = {
+    val pk = deleteEvent.pks(currentIndex)
+    val timestamp = deleteEvent.timestamps(currentIndex)
+    val pkType = deleteEvent.pkType.value
+
+    InternalRow(
+      UTF8String.fromString(pk),
+      timestamp,
+      pkType
+    )
+  }
+
   override def get(): InternalRow = {
     try {
-      val pk = deleteEvent.pks(currentIndex)
-      val timestamp = deleteEvent.timestamps(currentIndex)
-      val pkType = deleteEvent.pkType.value
-
-      InternalRow(
-        UTF8String.fromString(pk),
-        timestamp,
-        pkType
-      )
+      readerType match {
+        case Constants.logReaderTypeInsert => getInsertInternalRow()
+        case Constants.logReaderTypeDelete => getDeleteInternalRow()
+        case _ =>
+          throw new IllegalArgumentException(
+            s"Unsupported reader type: $readerType"
+          )
+      }
     } catch {
       case e: Exception =>
         logError(

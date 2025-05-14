@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
 
 import io.milvus.grpc.schema.DataType
+import io.milvus.grpc.schema.DataType.FloatVector
 
 object LogReader {
 
@@ -127,6 +128,104 @@ object LogReader {
       }
     }
     deleteData
+  }
+
+  def readInsertEvent(
+      input: InputStream,
+      objectMapper: ObjectMapper,
+      dataType: DataType
+  ): InsertEventData = {
+    val eventHeaderBuffer = getByteBuffer(input, EventHeader.getSize())
+    if (eventHeaderBuffer == Constants.EmptyByteBuffer) {
+      return null
+    }
+    val eventHeader = EventHeader.read(eventHeaderBuffer)
+    if (eventHeader.eventType != EventTypeCode.InsertEventType) {
+      throw new IOException(
+        s"Expected insert event, but got ${eventHeader.eventType}"
+      )
+    }
+    val baseEventDataBuffer =
+      getByteBuffer(input, BaseEventData.getSize())
+    val baseEventData = BaseEventData.read(baseEventDataBuffer)
+
+    val insertData = new InsertEventData(
+      baseEventData,
+      ArrayBuffer.empty[String],
+      eventHeader.timestamp,
+      dataType
+    )
+    val eventDataSize =
+      eventHeader.eventLength - EventHeader.getSize() - BaseEventData
+        .getSize()
+    val eventDataBuffer = getByteBuffer(input, eventDataSize)
+    val parquetPayloadReader =
+      new ParquetPayloadReader(eventDataBuffer.array())
+    dataType match {
+      case DataType.String | DataType.VarChar => {
+        val dataStrings = parquetPayloadReader
+          .getStringFromPayload(0)
+          .map(_.toString)
+        insertData.datas ++= dataStrings
+      }
+      case DataType.Bool => {
+        val dataBooleans = parquetPayloadReader
+          .getBooleanFromPayload(0)
+          .map(_.toString)
+        insertData.datas ++= dataBooleans
+      }
+      case DataType.Int8 => {
+        val dataInt8s = parquetPayloadReader
+          .getInt8FromPayload(0)
+          .map(_.toString)
+        insertData.datas ++= dataInt8s
+      }
+      case DataType.Int16 => {
+        val dataInt16s = parquetPayloadReader
+          .getInt16FromPayload(0)
+          .map(_.toString)
+        insertData.datas ++= dataInt16s
+      }
+      case DataType.Int32 => {
+        val dataInt32s = parquetPayloadReader
+          .getInt32FromPayload(0)
+          .map(_.toString)
+        insertData.datas ++= dataInt32s
+      }
+      case DataType.Int64 => {
+        val dataInt64s = parquetPayloadReader
+          .getInt64FromPayload(0)
+          .map(_.toString)
+        insertData.datas ++= dataInt64s
+      }
+      case DataType.Float => {
+        val dataFloats = parquetPayloadReader
+          .getFloat32FromPayload(0)
+          .map(_.toString)
+        insertData.datas ++= dataFloats
+      }
+      case DataType.Double => {
+        val dataDoubles = parquetPayloadReader
+          .getFloat64FromPayload(0)
+          .map(_.toString)
+        insertData.datas ++= dataDoubles
+      }
+      case FloatVector => {
+        val dataFloatVectors = parquetPayloadReader
+          .getFloatVectorFromPayload(0)
+          .map(vector => {
+            vector.map(_.toString).mkString(",")
+          })
+        insertData.datas ++= dataFloatVectors
+      }
+      // TODO: vector type
+      case _ => {
+        throw new IOException(
+          s"Unsupported data type: ${dataType}, for insert event"
+        )
+      }
+    }
+    insertData
   }
 
   def read(is: InputStream) = {

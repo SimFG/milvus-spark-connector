@@ -55,5 +55,4 @@ case class MilvusTable(
         // TableCapability.BATCH_READ
     ).asJava
   }
-
 }
