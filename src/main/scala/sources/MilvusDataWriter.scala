@@ -1,4 +1,4 @@
-package com.zilliz.spark.connector.writer
+package com.zilliz.spark.connector.sources
 
 import java.nio.ByteBuffer
 import scala.collection.mutable
