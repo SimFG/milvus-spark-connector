@@ -34,10 +34,10 @@ object Constants {
   val DeletePkColumnName = "pk"
 
   // reader param constant
-  val logPathParamName = "path"
-  val logReaderTypeParamName = "readerType"
-  val logReaderTypeInsert = "insert"
-  val logReaderTypeDelete = "delete"
+  val LogPathParamName = "path"
+  val LogReaderTypeParamName = "readerType"
+  val LogReaderTypeInsert = "insert"
+  val LogReaderTypeDelete = "delete"
 
   def readMagicNumber(buffer: ByteBuffer) = {
     val num = buffer.getInt()

@@ -42,14 +42,14 @@ class MilvusBinlogDataSource
     logInfo(
       s"inferSchema options, keys: ${options.keySet()}, values: ${options.values()}"
     )
-    val readerType = options.get(Constants.logReaderTypeParamName)
+    val readerType = options.get(Constants.LogReaderTypeParamName)
     if (readerType == null) {
       throw new IllegalArgumentException(
-        s"Option '${Constants.logReaderTypeParamName}' is required for milvusbinlog format."
+        s"Option '${Constants.LogReaderTypeParamName}' is required for milvusbinlog format."
       )
     }
     readerType match {
-      case Constants.logReaderTypeInsert | Constants.logReaderTypeDelete => {
+      case Constants.LogReaderTypeInsert | Constants.LogReaderTypeDelete => {
         StructType(
           Seq(
             org.apache.spark.sql.types
@@ -183,7 +183,7 @@ class MilvusBinlogScan(schema: StructType, options: CaseInsensitiveStringMap)
 case class MilvusBinlogInputPartition(filePath: String) extends InputPartition
 
 case class MilvusBinlogReaderOptions(
-    readerType: String // TODO temp test purpose
+    readerType: String
 ) extends Serializable
 
 // 5. PartitionReaderFactory
@@ -191,7 +191,7 @@ class MilvusBinlogPartitionReaderFactory(options: CaseInsensitiveStringMap)
     extends PartitionReaderFactory {
 
   private val readerOptions = MilvusBinlogReaderOptions(
-    options.get(Constants.logReaderTypeParamName)
+    options.get(Constants.LogReaderTypeParamName)
   )
 
   override def createReader(
@@ -225,8 +225,8 @@ class MilvusBinlogPartitionReader(
 
   override def next(): Boolean = {
     readerType match {
-      case Constants.logReaderTypeInsert => readInsertEvent()
-      case Constants.logReaderTypeDelete => readDeleteEvent()
+      case Constants.LogReaderTypeInsert => readInsertEvent()
+      case Constants.LogReaderTypeDelete => readDeleteEvent()
       case _ =>
         throw new IllegalArgumentException(
           s"Unsupported reader type: $readerType"
@@ -291,8 +291,8 @@ class MilvusBinlogPartitionReader(
   override def get(): InternalRow = {
     try {
       readerType match {
-        case Constants.logReaderTypeInsert => getInsertInternalRow()
-        case Constants.logReaderTypeDelete => getDeleteInternalRow()
+        case Constants.LogReaderTypeInsert => getInsertInternalRow()
+        case Constants.LogReaderTypeDelete => getDeleteInternalRow()
         case _ =>
           throw new IllegalArgumentException(
             s"Unsupported reader type: $readerType"
