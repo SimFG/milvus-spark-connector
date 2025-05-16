@@ -1,0 +1,2 @@
+-J-Xmx12G
+-J-XX:+UseG1GC

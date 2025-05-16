@@ -1,13 +1,14 @@
 package com.zilliz.spark.connector.binlog
 
 import java.io.{BufferedReader, InputStreamReader}
-import java.util.{HashMap, Map => JMap}
-import java.util.Collections
+import java.net.URI
+import java.util.{Collections, HashMap, Map => JMap}
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.JavaConverters._
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
+import org.apache.hadoop.fs.s3a.S3AFileSystem
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.connector.catalog.{
@@ -150,15 +151,15 @@ class MilvusBinlogScan(schema: StructType, options: CaseInsensitiveStringMap)
       "Option 'path' is required for mybinlog files."
     )
   }
+  private val readerOptions = MilvusBinlogReaderOptions(options)
 
   override def readSchema(): StructType = schema
 
   override def toBatch: Batch = this
 
   override def planInputPartitions(): Array[InputPartition] = {
-    val path = new Path(pathOption)
-    val conf = SparkSession.active.sparkContext.hadoopConfiguration
-    val fs = path.getFileSystem(conf)
+    val path = readerOptions.getFilePath(pathOption)
+    val fs = readerOptions.getFileSystem(path)
 
     val fileStatuses = if (fs.getFileStatus(path).isDirectory) {
       fs.listStatus(path)
@@ -168,11 +169,13 @@ class MilvusBinlogScan(schema: StructType, options: CaseInsensitiveStringMap)
       Array(fs.getFileStatus(path))
     }
 
-    fileStatuses
+    val result = fileStatuses
       .map(status =>
         MilvusBinlogInputPartition(status.getPath.toString): InputPartition
       )
       .toArray
+    fs.close()
+    result
   }
 
   override def createReaderFactory(): PartitionReaderFactory = {
@@ -183,16 +186,94 @@ class MilvusBinlogScan(schema: StructType, options: CaseInsensitiveStringMap)
 case class MilvusBinlogInputPartition(filePath: String) extends InputPartition
 
 case class MilvusBinlogReaderOptions(
-    readerType: String
+    readerType: String,
+    s3FileSystemType: String,
+    s3BucketName: String,
+    s3RootPath: String,
+    s3Endpoint: String,
+    s3AccessKey: String,
+    s3SecretKey: String,
+    s3UseSSL: Boolean
 ) extends Serializable
+    with Logging {
+  def notEmpty(str: String): Boolean = str != null && str.trim.nonEmpty
+
+  def getConf(): Configuration = {
+    val conf = new Configuration()
+    if (notEmpty(s3FileSystemType)) {
+      conf.set(
+        "fs.s3a.endpoint",
+        s3Endpoint
+      )
+      conf.set("fs.s3a.path.style.access", "true")
+      conf.set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+      conf.set(
+        "fs.s3a.access.key",
+        s3AccessKey
+      )
+      conf.set(
+        "fs.s3a.secret.key",
+        s3SecretKey
+      )
+      conf.set(
+        "fs.s3a.connection.ssl.enabled",
+        s3UseSSL.toString
+      )
+    }
+    conf
+  }
+
+  def getFileSystem(path: Path): FileSystem = {
+    if (notEmpty(s3FileSystemType)) {
+      val conf = getConf()
+      val fileSystem = new S3AFileSystem()
+      fileSystem.initialize(
+        new URI(
+          s"s3a://${s3BucketName}/"
+        ),
+        conf
+      )
+      fileSystem
+    } else {
+      val conf = getConf()
+      path.getFileSystem(conf)
+    }
+  }
+
+  def getFilePath(path: String): Path = {
+    if (notEmpty(s3FileSystemType)) {
+      if (path.startsWith("s3a://")) {
+        new Path(path)
+      } else {
+        val finalPath = s"s3a://${s3BucketName}/${s3RootPath}/${path}"
+        new Path(new URI(finalPath))
+      }
+    } else {
+      new Path(path)
+    }
+  }
+}
+
+object MilvusBinlogReaderOptions {
+  def apply(options: CaseInsensitiveStringMap): MilvusBinlogReaderOptions = {
+    new MilvusBinlogReaderOptions(
+      options.get(Constants.LogReaderTypeParamName),
+      options.get(Constants.S3FileSystemTypeName),
+      options.getOrDefault(Constants.S3BucketName, "a-bucket"),
+      options.getOrDefault(Constants.S3RootPath, "files"),
+      options.getOrDefault(Constants.S3Endpoint, "localhost:9000"),
+      options.getOrDefault(Constants.S3AccessKey, "minioadmin"),
+      options.getOrDefault(Constants.S3SecretKey, "minioadmin"),
+      options.getOrDefault(Constants.S3UseSSL, "false").toBoolean
+    )
+  }
+}
 
 // 5. PartitionReaderFactory
 class MilvusBinlogPartitionReaderFactory(options: CaseInsensitiveStringMap)
     extends PartitionReaderFactory {
 
-  private val readerOptions = MilvusBinlogReaderOptions(
-    options.get(Constants.LogReaderTypeParamName)
-  )
+  private val readerOptions = MilvusBinlogReaderOptions(options)
 
   override def createReader(
       partition: InputPartition
@@ -210,10 +291,11 @@ class MilvusBinlogPartitionReader(
     with Logging {
   private val readerType: String = options.readerType
 
-  private val conf =
-    new Configuration() // Use Spark's Hadoop conf for HDFS etc.
-  private val path = new Path(filePath)
-  private val fs: FileSystem = path.getFileSystem(conf)
+  // private val conf =
+  //   new Configuration() // Use Spark's Hadoop conf for HDFS etc.
+  // private val conf = options.getConf()
+  private val path = options.getFilePath(filePath)
+  private val fs: FileSystem = options.getFileSystem(path)
   private val inputStream = fs.open(path)
 
   private val objectMapper = LogReader.getObjectMapper()
@@ -310,6 +392,9 @@ class MilvusBinlogPartitionReader(
   override def close(): Unit = {
     if (inputStream != null) {
       inputStream.close()
+    }
+    if (fs != null) {
+      fs.close()
     }
   }
 }

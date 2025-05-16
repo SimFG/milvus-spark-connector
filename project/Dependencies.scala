@@ -6,7 +6,8 @@ object Dependencies {
   lazy val sparkVersion = "3.5.3"
   // lazy val sparkVersion = "3.3.2"
   lazy val parquetVersion = "1.13.1"
-  lazy val hadoopVersion = "3.3.6"
+  lazy val hadoopVersion =
+    "3.3.4" // can't be changed https://github.com/apache/spark/blob/v3.5.3/pom.xml
   lazy val jacksonVersion = "2.17.3"
 
   lazy val munit = "org.scalameta" %% "munit" % "0.7.29"
@@ -32,6 +33,10 @@ object Dependencies {
     "org.apache.parquet" % "parquet-hadoop" % parquetVersion
   lazy val hadoopCommon =
     "org.apache.hadoop" % "hadoop-common" % hadoopVersion exclude ("javax.activation", "activation")
+  lazy val hadoopAws =
+    "org.apache.hadoop" % "hadoop-aws" % hadoopVersion
+  lazy val awsSdkS3 =
+    "software.amazon.awssdk" % "s3" % "2.30.38"
   lazy val jacksonScala =
     "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVersion
   lazy val jacksonDatabind =

@@ -42,6 +42,8 @@ lazy val root = (project in file("."))
       parquetColumn,
       parquetHadoop,
       hadoopCommon,
+      hadoopAws,
+      awsSdkS3,
       jacksonScala,
       jacksonDatabind
     ),
@@ -66,6 +68,116 @@ assemblyShadeRules in assembly := Seq(
 )
 
 assembly / assemblyMergeStrategy := {
+  case PathList(
+        "META-INF",
+        "native-image",
+        "io.netty",
+        "transport",
+        "reflection-config.json"
+      ) =>
+    MergeStrategy.discard
+  case PathList(
+        "META-INF",
+        "native-image",
+        "io.netty",
+        "codec-http",
+        "native-image.properties"
+      ) =>
+    MergeStrategy.discard
+  case PathList(
+        "META-INF",
+        "native-image",
+        "io.netty",
+        "handler",
+        "native-image.properties"
+      ) =>
+    MergeStrategy.discard
+  case PathList(
+        "META-INF",
+        "native-image",
+        "io.netty",
+        "common",
+        "native-image.properties"
+      ) =>
+    MergeStrategy.discard
+  case PathList(
+        "META-INF",
+        "native-image",
+        "io.netty",
+        "buffer",
+        "native-image.properties"
+      ) =>
+    MergeStrategy.discard
+  case PathList(
+        "META-INF",
+        "native-image",
+        "io.netty",
+        "transport",
+        "native-image.properties"
+      ) =>
+    MergeStrategy.discard
+  case PathList(
+        "META-INF",
+        "native-image",
+        "io.netty",
+        "netty-codec",
+        "generated",
+        "handlers",
+        "reflect-config.json"
+      ) =>
+    MergeStrategy.discard
+  case PathList(
+        "META-INF",
+        "native-image",
+        "io.netty",
+        "netty-handler",
+        "generated",
+        "handlers",
+        "reflect-config.json"
+      ) =>
+    MergeStrategy.discard
+  case PathList("META-INF", "io.netty.versions.properties") =>
+    MergeStrategy.discard // 丢弃 netty 的版本信息文件
+  case PathList("mime.types") =>
+    MergeStrategy.filterDistinctLines // 合并 mime.types，保留不重复的行
+  case PathList(
+        "META-INF",
+        "native-image",
+        "io.netty",
+        "netty-common",
+        "native-image.properties"
+      ) =>
+    MergeStrategy.discard // 丢弃 native-image 属性文件
+  case PathList("META-INF", "FastDoubleParser-NOTICE") =>
+    MergeStrategy.discard
+  case PathList(
+        "META-INF",
+        "native-image",
+        "io.netty",
+        "netty-codec",
+        "generated",
+        "handlers",
+        "reflect-config.json"
+      ) =>
+    MergeStrategy.discard
+  case PathList(
+        "META-INF",
+        "native-image",
+        "io.netty",
+        "netty-handler",
+        "generated",
+        "handlers",
+        "reflect-config.json"
+      ) =>
+    MergeStrategy.discard
+  case PathList(
+        "META-INF",
+        "native-image",
+        "io.netty",
+        "netty-common",
+        "native-image.properties"
+      ) =>
+    MergeStrategy.discard
   case PathList("module-info.class")         => MergeStrategy.discard
   case x if x.endsWith("/module-info.class") => MergeStrategy.discard
   case x =>

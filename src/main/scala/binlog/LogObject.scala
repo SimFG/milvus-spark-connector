@@ -39,6 +39,15 @@ object Constants {
   val LogReaderTypeInsert = "insert"
   val LogReaderTypeDelete = "delete"
 
+  // s3 config
+  val S3FileSystemTypeName = "s3.fs" // default: s3a://
+  val S3Endpoint = "s3.endpoint"
+  val S3BucketName = "s3.bucket"
+  val S3RootPath = "s3.rootPath"
+  val S3AccessKey = "s3.user"
+  val S3SecretKey = "s3.password"
+  val S3UseSSL = "s3.useSSL"
+
   def readMagicNumber(buffer: ByteBuffer) = {
     val num = buffer.getInt()
     if (num != MagicNumber) {
