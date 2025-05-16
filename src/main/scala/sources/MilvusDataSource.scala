@@ -26,7 +26,7 @@ import org.apache.spark.sql.connector.write.{
 import org.apache.spark.sql.connector.write.{DataWriter, DataWriterFactory}
 import org.apache.spark.sql.connector.write.WriterCommitMessage
 import org.apache.spark.sql.sources.DataSourceRegister
-import org.apache.spark.sql.types.{StructField, StructType}
+import org.apache.spark.sql.types.{LongType, StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 import com.zilliz.spark.connector.{DataTypeUtil, MilvusClient, MilvusOption}
@@ -108,15 +108,18 @@ case class MilvusTable(
   override def name(): String = milvusOption.collectionName
 
   override def schema(): StructType = sparkSchema.getOrElse(
+    // StructType(
+    //   milvusCollection.schema.fields.map(field =>
+    //     StructField(
+    //       field.name,
+    //       DataTypeUtil.toDataType(field),
+    //       field.nullable
+    //     )
+    //   )
+    // )
     StructType(
-      milvusCollection.schema.fields.map(field =>
-        StructField(
-          field.name,
-          DataTypeUtil.toDataType(field),
-          field.nullable
-        )
-      )
-    )
+      Array(StructField("id", LongType, false))
+    ) // TODO: it only be used for read data
   )
 
   override def capabilities(): ju.Set[TableCapability] = {

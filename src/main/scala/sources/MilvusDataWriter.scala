@@ -121,11 +121,14 @@ case class MilvusDataWriter(
   }
 
   override def abort(): Unit = {
+    commit()
+    milvusClient.close()
     logWarning("Aborted data write")
   }
 
   override def close(): Unit = {
     commit()
+    milvusClient.close()
     logInfo("Closed data writer")
   }
 }
