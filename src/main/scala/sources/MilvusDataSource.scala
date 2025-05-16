@@ -1,8 +1,11 @@
 package com.zilliz.spark.connector.sources
 
 import java.{util => ju}
+import java.util.{Collections, HashMap, Map => JMap}
+import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 
+import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.connector.catalog.{
   SupportsWrite,
@@ -10,7 +13,14 @@ import org.apache.spark.sql.connector.catalog.{
   TableCapability,
   TableProvider
 }
+import org.apache.spark.sql.connector.catalog.SupportsRead
 import org.apache.spark.sql.connector.expressions.Transform
+import org.apache.spark.sql.connector.read.Batch
+import org.apache.spark.sql.connector.read.InputPartition
+import org.apache.spark.sql.connector.read.PartitionReader
+import org.apache.spark.sql.connector.read.PartitionReaderFactory
+import org.apache.spark.sql.connector.read.Scan
+import org.apache.spark.sql.connector.read.ScanBuilder
 import org.apache.spark.sql.connector.write.{
   BatchWrite,
   DataWriterFactory,
@@ -30,6 +40,7 @@ import org.apache.spark.sql.types.{LongType, StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 import com.zilliz.spark.connector.{DataTypeUtil, MilvusClient, MilvusOption}
+import com.zilliz.spark.connector.binlog.MilvusBinlogReaderOptions
 
 // 1. DataSourceRegister and TableProvider
 case class MilvusDataSource() extends TableProvider with DataSourceRegister {
@@ -83,7 +94,10 @@ case class MilvusDataSource() extends TableProvider with DataSourceRegister {
 case class MilvusTable(
     milvusOption: MilvusOption,
     sparkSchema: Option[StructType]
-) extends SupportsWrite {
+) extends Table
+    with SupportsWrite
+    with SupportsRead
+    with Logging {
   lazy val milvusCollection = {
     val client = MilvusClient(milvusOption)
     try {
@@ -105,38 +119,153 @@ case class MilvusTable(
   override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder =
     MilvusWriteBuilder(milvusOption, info)
 
+  override def newScanBuilder(
+      options: CaseInsensitiveStringMap
+  ): ScanBuilder = {
+    // Merge table properties with scan options. Scan options take precedence.
+    val mergedOptions: JMap[String, String] = new HashMap[String, String]()
+    mergedOptions.putAll(properties)
+    mergedOptions.putAll(options)
+    val allOptions = new CaseInsensitiveStringMap(mergedOptions)
+    // var fields = Seq[StructField]()
+    // fields = fields :+ StructField("rowID", LongType, false)
+    // fields = fields :+ StructField("timestamp", LongType, false)
+    // fields = fields ++ schema().fields
+    // logInfo(
+    //   s"fubang new scan schema fields: ${fields.map(_.name).mkString(",")}"
+    // )
+    // new MilvusScanBuilder(StructType(fields), allOptions)
+    new MilvusScanBuilder(schema(), allOptions)
+  }
+
   override def name(): String = milvusOption.collectionName
 
-  override def schema(): StructType = sparkSchema.getOrElse(
-    // StructType(
-    //   milvusCollection.schema.fields.map(field =>
-    //     StructField(
-    //       field.name,
-    //       DataTypeUtil.toDataType(field),
-    //       field.nullable
-    //     )
-    //   )
-    // )
-    StructType(
-      Array(StructField("id", LongType, false))
-    ) // TODO: it only be used for read data
-  )
+  override def schema(): StructType = {
+    var fields = Seq[StructField]()
+    fields = fields :+ StructField("rowID", LongType, false)
+    fields = fields :+ StructField("timestamp", LongType, false)
+    fields = fields ++ milvusCollection.schema.fields.map(field =>
+      StructField(
+        field.name,
+        DataTypeUtil.toDataType(field),
+        field.nullable
+      )
+    )
+    StructType(fields)
+  }
 
   override def capabilities(): ju.Set[TableCapability] = {
     Set[TableCapability](
-      TableCapability.BATCH_WRITE
-        // TableCapability.BATCH_READ
+      TableCapability.BATCH_WRITE,
+      TableCapability.BATCH_READ
     ).asJava
   }
 }
 
-// 3. WriteBuilder
+// 3. WriteBuilder and ScanBuilder
 case class MilvusWriteBuilder(
     milvusOptions: MilvusOption,
     info: LogicalWriteInfo
 ) extends WriteBuilder
     with Serializable {
   override def build: Write = MilvusWrite(milvusOptions, info.schema())
+}
+
+class MilvusScanBuilder(
+    schema: StructType,
+    options: CaseInsensitiveStringMap
+) extends ScanBuilder {
+  override def build(): Scan = new MilvusScan(schema, options)
+}
+
+class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
+    extends Scan
+    with Batch
+    with Logging {
+  private val pathOption: String = options.get("path")
+  if (pathOption == null) {
+    throw new IllegalArgumentException(
+      "Option 'path' is required for mybinlog files."
+    )
+  }
+  private val readerOptions = MilvusBinlogReaderOptions(options)
+
+  override def readSchema(): StructType = {
+    logInfo(s"MilvusScan.readSchema() returning: ${schema.simpleString}")
+    schema
+  }
+
+  override def toBatch: Batch = this
+
+  override def planInputPartitions(): Array[InputPartition] = {
+    val rootPath = readerOptions.getFilePath(pathOption)
+    val fs = readerOptions.getFileSystem(rootPath)
+
+    // segment path
+    val fileStatuses = if (fs.getFileStatus(rootPath).isDirectory) {
+      val fieldDirStatuses = fs
+        .listStatus(rootPath)
+        .filterNot(_.getPath.getName.startsWith("_"))
+        .filterNot(_.getPath.getName.startsWith(".")) // Ignore hidden files
+      fieldDirStatuses
+        .flatMap(fieldDirStatus => {
+          val fieldPath = fieldDirStatus.getPath()
+          if (fs.getFileStatus(fieldPath).isDirectory) {
+            val deepFileStatuses = fs
+              .listStatus(fieldPath)
+            // .filter(_.getPath.getName.startsWith("_"))
+            // .filter(_.getPath.getName.startsWith(".")) // Ignore hidden files
+            deepFileStatuses
+          } else {
+            throw new IllegalArgumentException(
+              s"fieldPath is not a directory: $fieldPath"
+            )
+          }
+        })
+    } else {
+      // Array(fs.getFileStatus(rootPath))
+      throw new IllegalArgumentException(
+        s"rootPath is not a directory: $rootPath"
+      )
+    }
+
+    val filePathMap = mutable.Map[String, Seq[String]]()
+    fileStatuses.foreach(status => {
+      val filePath = status.getPath.toString
+      val paths = filePath.split("/")
+      val fileName = paths(paths.length - 1)
+      val filedID = paths(paths.length - 2)
+      if (filePathMap.contains(filedID)) {
+        filePathMap(filedID) = filePathMap(filedID) :+ fileName
+      } else {
+        filePathMap(filedID) = Seq(fileName)
+      }
+    })
+    logInfo(s"fubang filePathMap: $filePathMap")
+
+    // Sort the file names in ascending order for each field ID
+    filePathMap.foreach { case (fieldId, fileNames) =>
+      filePathMap(fieldId) = fileNames.sorted
+    }
+
+    val fieldMaps = filePathMap.head._2.indices.map { i =>
+      filePathMap.map { case (fieldId, fileNames) =>
+        val fullPath = s"${rootPath.toString()}/${fieldId}/${fileNames(i)}"
+        logInfo(s"fubang fullPath: $fullPath")
+        fieldId -> fullPath
+      }.toMap
+    }.toList
+
+    val result = fieldMaps
+      .map(fieldMap => MilvusInputPartition(fieldMap): InputPartition)
+      .toArray
+    fs.close()
+    result
+  }
+
+  override def createReaderFactory(): PartitionReaderFactory = {
+    new MilvusReaderFactory(schema, options)
+  }
 }
 
 // 4. Write
@@ -173,3 +302,22 @@ case class MilvusDataWriterFactory(
 }
 
 case class MilvusCommitMessage(rowCount: Int) extends WriterCommitMessage
+
+case class MilvusInputPartition(fieldFiles: Map[String, String])
+    extends InputPartition
+
+class MilvusReaderFactory(
+    schema: StructType,
+    options: CaseInsensitiveStringMap
+) extends PartitionReaderFactory {
+
+  private val readerOptions = MilvusBinlogReaderOptions(options)
+
+  override def createReader(
+      partition: InputPartition
+  ): PartitionReader[InternalRow] = {
+    val milvusPartition = partition.asInstanceOf[MilvusInputPartition]
+    // Create the data reader with the file map, schema, and options
+    new MilvusPartitionReader(milvusPartition.fieldFiles, readerOptions)
+  }
+}
