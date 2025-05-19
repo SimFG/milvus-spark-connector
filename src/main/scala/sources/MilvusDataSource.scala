@@ -127,14 +127,6 @@ case class MilvusTable(
     mergedOptions.putAll(properties)
     mergedOptions.putAll(options)
     val allOptions = new CaseInsensitiveStringMap(mergedOptions)
-    // var fields = Seq[StructField]()
-    // fields = fields :+ StructField("rowID", LongType, false)
-    // fields = fields :+ StructField("timestamp", LongType, false)
-    // fields = fields ++ schema().fields
-    // logInfo(
-    //   s"fubang new scan schema fields: ${fields.map(_.name).mkString(",")}"
-    // )
-    // new MilvusScanBuilder(StructType(fields), allOptions)
     new MilvusScanBuilder(schema(), allOptions)
   }
 
@@ -213,8 +205,10 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
           if (fs.getFileStatus(fieldPath).isDirectory) {
             val deepFileStatuses = fs
               .listStatus(fieldPath)
-            // .filter(_.getPath.getName.startsWith("_"))
-            // .filter(_.getPath.getName.startsWith(".")) // Ignore hidden files
+              .filterNot(_.getPath.getName.startsWith("_"))
+              .filterNot(
+                _.getPath.getName.startsWith(".")
+              ) // Ignore hidden files
             deepFileStatuses
           } else {
             throw new IllegalArgumentException(

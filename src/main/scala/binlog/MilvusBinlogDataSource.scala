@@ -77,9 +77,10 @@ class MilvusBinlogDataSource
   ): Table = {
     logInfo(s"getTable schema, properties: $properties")
     val path = properties.get("path")
-    if (path == null) {
+    val collection = properties.get("collection")
+    if (path == null && collection == null) {
       throw new IllegalArgumentException(
-        "Option 'path' is required for mybinlog format."
+        "Option 'path' or 'collection' is required for milvusbinlog format."
       )
     }
     // Pass all options to the table
@@ -144,30 +145,128 @@ class MilvusBinlogScanBuilder(
 // 4. Scan (Batch Scan)
 class MilvusBinlogScan(schema: StructType, options: CaseInsensitiveStringMap)
     extends Scan
-    with Batch {
-  private val pathOption: String = options.get("path")
+    with Batch
+    with Logging {
+  private val readerOptions = MilvusBinlogReaderOptions(options)
+  private val pathOption: String = getPathOption()
   if (pathOption == null) {
     throw new IllegalArgumentException(
       "Option 'path' is required for mybinlog files."
     )
   }
-  private val readerOptions = MilvusBinlogReaderOptions(options)
+
+  def getPathOption(): String = {
+    if (!readerOptions.notEmpty(readerOptions.s3FileSystemType)) {
+      return options.get("path")
+    }
+    val collection = options.getOrDefault("collection", "")
+    val partition = options.getOrDefault("partition", "")
+    val segment = options.getOrDefault("segment", "")
+    val field = options.getOrDefault("field", "")
+    if (collection.isEmpty) {
+      return options.get("path")
+    }
+    if (
+      readerOptions.readerType == Constants.LogReaderTypeInsert && field.isEmpty
+    ) {
+      throw new IllegalArgumentException(
+        "Option 'field' is required for insert log."
+      )
+    }
+    val firstPath =
+      if (readerOptions.readerType == Constants.LogReaderTypeInsert) {
+        "insert_log"
+      } else {
+        "delta_log"
+      }
+    if (partition.isEmpty) {
+      return s"${firstPath}/${collection}"
+    }
+    if (segment.isEmpty) {
+      return s"${firstPath}/${collection}/${partition}"
+    }
+    if (readerOptions.readerType == Constants.LogReaderTypeInsert) {
+      return s"${firstPath}/${collection}/${partition}/${segment}/${field}"
+    }
+    return s"${firstPath}/${collection}/${partition}/${segment}"
+  }
 
   override def readSchema(): StructType = schema
 
   override def toBatch: Batch = this
 
+  def getBinlogStatuses(fs: FileSystem, segmentPath: Path): Seq[FileStatus] = {
+    val field = options.getOrDefault("field", "")
+    if (readerOptions.readerType == Constants.LogReaderTypeInsert) {
+      fs.listStatus(segmentPath)
+        .filter(_.getPath.getName == field)
+        .filter(_.isDirectory())
+        .flatMap(status => {
+          fs.listStatus(status.getPath())
+        })
+        .toSeq
+    } else {
+      fs.listStatus(segmentPath).toSeq
+    }
+  }
+
+  def getPartitionOrSegmentStatuses(
+      fs: FileSystem,
+      dirPath: Path
+  ): Seq[FileStatus] = {
+    if (!fs.getFileStatus(dirPath).isDirectory) {
+      throw new IllegalArgumentException(
+        s"Path $dirPath is not a directory."
+      )
+    }
+    fs.listStatus(dirPath)
+      .filter(_.isDirectory())
+      .filterNot(_.getPath.getName.startsWith("_"))
+      .filterNot(_.getPath.getName.startsWith("."))
+      .toSeq
+  }
   override def planInputPartitions(): Array[InputPartition] = {
-    val path = readerOptions.getFilePath(pathOption)
+    var path = readerOptions.getFilePath(pathOption)
+    var fileStatuses = Seq[FileStatus]()
     val fs = readerOptions.getFileSystem(path)
 
-    val fileStatuses = if (fs.getFileStatus(path).isDirectory) {
-      fs.listStatus(path)
-        .filterNot(_.getPath.getName.startsWith("_"))
-        .filterNot(_.getPath.getName.startsWith(".")) // Ignore hidden files
+    val collection = options.getOrDefault("collection", "")
+    val partition = options.getOrDefault("partition", "")
+    val segment = options.getOrDefault("segment", "")
+    val field = options.getOrDefault("field", "")
+    if (
+      readerOptions.notEmpty(
+        readerOptions.s3FileSystemType
+      ) && !collection.isEmpty
+    ) {
+      if (!partition.isEmpty && !segment.isEmpty) { // full path
+        fileStatuses = getBinlogStatuses(fs, path)
+      } else if (!partition.isEmpty) { // leak segment path
+        val segmentStatuses = getPartitionOrSegmentStatuses(fs, path)
+        segmentStatuses.foreach(status => {
+          fileStatuses = fileStatuses ++ getBinlogStatuses(fs, status.getPath())
+        })
+      } else { // leak partition path
+        val partitionStatuses = getPartitionOrSegmentStatuses(fs, path)
+        val segmentStatuses = partitionStatuses.flatMap(status => {
+          getPartitionOrSegmentStatuses(fs, status.getPath())
+        })
+        segmentStatuses.foreach(status => {
+          fileStatuses = fileStatuses ++ getBinlogStatuses(fs, status.getPath())
+        })
+      }
     } else {
-      Array(fs.getFileStatus(path))
+      fileStatuses = if (fs.getFileStatus(path).isDirectory) {
+        fs.listStatus(path)
+          .filterNot(_.getPath.getName.startsWith("_"))
+          .filterNot(_.getPath.getName.startsWith(".")) // Ignore hidden files
+      } else {
+        Array(fs.getFileStatus(path))
+      }
     }
+    logInfo(
+      s"all file statuses: ${fileStatuses.map(_.getPath.toString).mkString(", ")}"
+    )
 
     val result = fileStatuses
       .map(status =>
@@ -291,9 +390,6 @@ class MilvusBinlogPartitionReader(
     with Logging {
   private val readerType: String = options.readerType
 
-  // private val conf =
-  //   new Configuration() // Use Spark's Hadoop conf for HDFS etc.
-  // private val conf = options.getConf()
   private val path = options.getFilePath(filePath)
   private val fs: FileSystem = options.getFileSystem(path)
   private val inputStream = fs.open(path)
