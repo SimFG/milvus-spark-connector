@@ -16,10 +16,29 @@ object LogReader {
   def getByteBuffer(is: InputStream, size: Int): ByteBuffer = {
     val buffer = ByteBuffer.allocate(size)
     buffer.order(ByteOrder.LITTLE_ENDIAN)
-    val len = is.read(buffer.array())
-    if (len <= 0) {
-      return Constants.EmptyByteBuffer
+    val chunkSize = 4 * 1024
+    val tempBuffer = new Array[Byte](chunkSize)
+    var bytesRead = 0
+
+    while (bytesRead < size) {
+      val remaining = size - bytesRead
+      val bytesToRead = Math.min(chunkSize, remaining)
+
+      val n = is.read(tempBuffer, 0, bytesToRead)
+      if (n == -1) {
+        // End of stream reached before reading 'size' bytes
+        // You might want to handle this case differently, e.g., throw an exception
+        println(
+          s"Warning: End of stream reached after reading $bytesRead bytes, expected $size."
+        )
+        buffer.flip() // Prepare for reading from the buffer
+        return buffer
+      }
+      buffer.put(tempBuffer, 0, n)
+      bytesRead += n
     }
+    println(s"read buffer len: $bytesRead, size: $size")
+    buffer.flip() // Prepare for reading from the buffer
     buffer
   }
 
