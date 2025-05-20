@@ -5,6 +5,7 @@ import java.util.{Collections, HashMap, Map => JMap}
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 
+import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.connector.catalog.{
@@ -15,12 +16,14 @@ import org.apache.spark.sql.connector.catalog.{
 }
 import org.apache.spark.sql.connector.catalog.SupportsRead
 import org.apache.spark.sql.connector.expressions.Transform
-import org.apache.spark.sql.connector.read.Batch
-import org.apache.spark.sql.connector.read.InputPartition
-import org.apache.spark.sql.connector.read.PartitionReader
-import org.apache.spark.sql.connector.read.PartitionReaderFactory
-import org.apache.spark.sql.connector.read.Scan
-import org.apache.spark.sql.connector.read.ScanBuilder
+import org.apache.spark.sql.connector.read.{
+  Batch,
+  InputPartition,
+  PartitionReader,
+  PartitionReaderFactory,
+  Scan,
+  ScanBuilder
+}
 import org.apache.spark.sql.connector.write.{
   BatchWrite,
   DataWriterFactory,
@@ -33,8 +36,11 @@ import org.apache.spark.sql.connector.write.{
   Write,
   WriteBuilder
 }
-import org.apache.spark.sql.connector.write.{DataWriter, DataWriterFactory}
-import org.apache.spark.sql.connector.write.WriterCommitMessage
+import org.apache.spark.sql.connector.write.{
+  DataWriter,
+  DataWriterFactory,
+  WriterCommitMessage
+}
 import org.apache.spark.sql.sources.DataSourceRegister
 import org.apache.spark.sql.types.{LongType, StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
@@ -174,7 +180,7 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
     extends Scan
     with Batch
     with Logging {
-  private val pathOption: String = options.get("path")
+  private val pathOption: String = getPathOption()
   if (pathOption == null) {
     throw new IllegalArgumentException(
       "Option 'path' is required for mybinlog files."
@@ -182,18 +188,53 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
   }
   private val readerOptions = MilvusBinlogReaderOptions(options)
 
+  def getPathOption(): String = {
+    if (options.get("path") != null) {
+      return options.get("path")
+    }
+    val collection = options.getOrDefault("collection", "")
+    val partition = options.getOrDefault("partition", "")
+    val segment = options.getOrDefault("segment", "")
+    val firstPath = "insert_log"
+    if (collection.isEmpty) {
+      throw new IllegalArgumentException(
+        "Option 'collection' is required for reading milvus data."
+      )
+    }
+    if (partition.isEmpty) {
+      return s"${firstPath}/${collection}"
+    }
+    if (segment.isEmpty) {
+      return s"${firstPath}/${collection}/${partition}"
+    }
+    return s"${firstPath}/${collection}/${partition}/${segment}"
+  }
+
   override def readSchema(): StructType = {
     logInfo(s"MilvusScan.readSchema() returning: ${schema.simpleString}")
     schema
   }
 
-  override def toBatch: Batch = this
+  def getCollectionOrPartitionStatuses(
+      fs: FileSystem,
+      dirPath: Path
+  ): Seq[FileStatus] = {
+    if (!fs.getFileStatus(dirPath).isDirectory) {
+      throw new IllegalArgumentException(
+        s"Path $dirPath is not a directory."
+      )
+    }
+    fs.listStatus(dirPath)
+      .filter(_.isDirectory())
+      .filterNot(_.getPath.getName.startsWith("_"))
+      .filterNot(_.getPath.getName.startsWith("."))
+      .toSeq
+  }
 
-  override def planInputPartitions(): Array[InputPartition] = {
-    val rootPath = readerOptions.getFilePath(pathOption)
-    val fs = readerOptions.getFileSystem(rootPath)
-
-    // segment path
+  def getSegmentFieldMap(
+      fs: FileSystem,
+      rootPath: Path
+  ): Seq[Map[String, String]] = {
     val fileStatuses = if (fs.getFileStatus(rootPath).isDirectory) {
       val fieldDirStatuses = fs
         .listStatus(rootPath)
@@ -249,6 +290,43 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
         fieldId -> fullPath
       }.toMap
     }.toList
+    return fieldMaps
+  }
+
+  override def toBatch: Batch = this
+
+  override def planInputPartitions(): Array[InputPartition] = {
+    val rootPath = readerOptions.getFilePath(pathOption)
+    val fs = readerOptions.getFileSystem(rootPath)
+
+    // segment path
+    val rawPath = options.getOrDefault("path", "")
+    val collection = options.getOrDefault("collection", "")
+    val partition = options.getOrDefault("partition", "")
+    val segment = options.getOrDefault("segment", "")
+
+    var fieldMaps = Seq[Map[String, String]]()
+    if (rawPath.isEmpty) {
+      if (!partition.isEmpty() && !segment.isEmpty()) {
+        fieldMaps ++= getSegmentFieldMap(fs, rootPath)
+      } else if (!partition.isEmpty()) {
+        var segmentStatuses = getCollectionOrPartitionStatuses(fs, rootPath)
+        segmentStatuses.foreach(status => {
+          fieldMaps ++= getSegmentFieldMap(fs, status.getPath())
+        })
+      } else {
+        var partitionStatuses = getCollectionOrPartitionStatuses(fs, rootPath)
+        partitionStatuses.foreach(status => {
+          val segmentStatuses =
+            getCollectionOrPartitionStatuses(fs, status.getPath())
+          segmentStatuses.foreach(status => {
+            fieldMaps ++= getSegmentFieldMap(fs, status.getPath())
+          })
+        })
+      }
+    } else {
+      fieldMaps ++= getSegmentFieldMap(fs, rootPath)
+    }
 
     val result = fieldMaps
       .map(fieldMap => MilvusInputPartition(fieldMap): InputPartition)
