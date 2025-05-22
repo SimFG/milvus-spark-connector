@@ -60,10 +60,10 @@ object EventHeader {
   // ByteBuffer bufferLittle = ByteBuffer.wrap(dataLittleEndian);
   // bufferLittle.order(ByteOrder.LITTLE_ENDIAN);
   def read(buffer: ByteBuffer): EventHeader = {
-    val timestamp = buffer.getLong() // TODO check the timestamp
+    val timestamp = buffer.getLong()
     val eventType = EventTypeCode.apply(
       buffer.get()
-    ) // TODO headerBuffer.get(8) & 0xFF; // Read as unsigned byte
+    )
     val eventLength = buffer.getInt()
     val nextPosition = buffer.getInt()
     EventHeader(timestamp, eventType, eventLength, nextPosition)

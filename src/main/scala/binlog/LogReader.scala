@@ -9,7 +9,6 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
 
 import io.milvus.grpc.schema.DataType
-import io.milvus.grpc.schema.DataType.FloatVector
 
 object LogReader {
 
@@ -181,7 +180,7 @@ object LogReader {
     val parquetPayloadReader =
       new ParquetPayloadReader(eventDataBuffer.array())
     dataType match {
-      case DataType.String | DataType.VarChar => {
+      case DataType.String | DataType.VarChar | DataType.JSON => {
         val dataStrings = parquetPayloadReader
           .getStringFromPayload(0)
           .map(_.toString)
@@ -229,13 +228,49 @@ object LogReader {
           .map(_.toString)
         insertData.datas ++= dataDoubles
       }
-      case FloatVector => {
+      case DataType.Array => {
+        throw new IOException(
+          s"Unsupported data type: ${dataType}, for insert event"
+        )
+      }
+      case DataType.Geometry => {
+        throw new IOException(
+          s"Unsupported data type: ${dataType}, for insert event"
+        )
+      }
+      case DataType.Text => {
+        throw new IOException(
+          s"Unsupported data type: ${dataType}, for insert event"
+        )
+      }
+      case DataType.BinaryVector => {
+        throw new IOException(
+          s"Unsupported data type: ${dataType}, for insert event"
+        )
+      }
+      case DataType.FloatVector => {
         val dataFloatVectors = parquetPayloadReader
           .getFloatVectorFromPayload(0)
           .map(vector => {
             vector.map(_.toString).mkString(",")
           })
         insertData.datas ++= dataFloatVectors
+      }
+      case DataType.Float16Vector => {
+        val dataFloat16Vectors = parquetPayloadReader
+          .getFloat16VectorFromPayload(0)
+          .map(vector => {
+            vector.map(_.toString).mkString(",")
+          })
+        insertData.datas ++= dataFloat16Vectors
+      }
+      case DataType.BFloat16Vector => {
+        val dataBFloat16Vectors = parquetPayloadReader
+          .getBFloat16VectorFromPayload(0)
+          .map(vector => {
+            vector.map(_.toString).mkString(",")
+          })
+        insertData.datas ++= dataBFloat16Vectors
       }
       // TODO: vector type
       case _ => {
@@ -266,7 +301,7 @@ object LogReader {
       )
 
       val descriptorEvent = DescriptorEvent(eventHeader, descriptorEventData)
-      println(descriptorEvent) // TODO: return the event
+      println(descriptorEvent)
       val dataType = descriptorEvent.data.payloadDataType
 
       var isEOF = false
@@ -282,7 +317,7 @@ object LogReader {
               val baseEventDataBuffer =
                 getByteBuffer(input, BaseEventData.getSize())
               val baseEventData = BaseEventData.read(baseEventDataBuffer)
-              println(baseEventData) // TODO: return the event
+              println(baseEventData)
 
               val deleteData = new DeleteEventData(
                 baseEventData,
@@ -347,7 +382,7 @@ object LogReader {
                   )
                 }
               }
-              println(s"deleteData: $deleteData") // TODO: return the event
+              println(s"deleteData: $deleteData")
             }
             case _ => {
               throw new IOException(

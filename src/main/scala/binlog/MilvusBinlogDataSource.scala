@@ -98,7 +98,6 @@ class MilvusBinlogTable(
 ) extends Table
     with SupportsRead {
 
-  // TODO: add a name for the table
   override def name(): String = s"MilvusBinlogTable"
 
   override def schema(): StructType = {

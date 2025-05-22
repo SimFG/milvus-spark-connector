@@ -17,6 +17,8 @@ import org.apache.parquet.io.{ColumnIOFactory, MessageColumnIO, RecordReader}
 import org.apache.parquet.schema.{MessageType, PrimitiveType, Type}
 import org.apache.spark.internal.Logging
 
+import com.zilliz.spark.connector.FloatConverter
+
 /** ParquetPayloadReader reads and parses parquet format data from a byte array.
   * This implementation aligns with the Go implementation's
   * ParquetPayloadReader.
@@ -335,10 +337,7 @@ class ParquetPayloadReader(data: Array[Byte])
   }
 
   def getFloatVectorFromPayload(columnIndex: Int): List[Array[Float]] = {
-    // Note: This implementation assumes that the float vector is stored as a LIST of FLOATs
     val values = new ListBuffer[Array[Float]]()
-    // This requires custom implementation based on the specific Parquet schema used
-    // TODO: Implement for specific use cases as needed
     processParquetFile((group, schema) => {
       val dim =
         schema.getColumns().get(0).getPrimitiveType().getTypeLength() / 4
@@ -346,6 +345,42 @@ class ParquetPayloadReader(data: Array[Byte])
       val buffer = group.getBinary(columnIndex, 0).toByteBuffer
       buffer.order(Constants.Endian)
       buffer.asFloatBuffer().get(floatVector)
+      values += floatVector
+    })
+    values.toList
+  }
+
+  def getFloat16VectorFromPayload(columnIndex: Int): List[Array[Float]] = {
+    val values = new ListBuffer[Array[Float]]()
+    processParquetFile((group, schema) => {
+      val dim =
+        schema.getColumns().get(0).getPrimitiveType().getTypeLength() / 2
+      val floatVector = new Array[Float](dim)
+      val float16Bytes = new Array[Byte](2)
+      val buffer = group.getBinary(columnIndex, 0).toByteBuffer
+      buffer.order(Constants.Endian)
+      for (i <- 0 until dim) {
+        buffer.get(float16Bytes)
+        floatVector(i) = FloatConverter.fromFloat16Bytes(float16Bytes.toSeq)
+      }
+      values += floatVector
+    })
+    values.toList
+  }
+
+  def getBFloat16VectorFromPayload(columnIndex: Int): List[Array[Float]] = {
+    val values = new ListBuffer[Array[Float]]()
+    processParquetFile((group, schema) => {
+      val dim =
+        schema.getColumns().get(0).getPrimitiveType().getTypeLength() / 2
+      val floatVector = new Array[Float](dim)
+      val float16Bytes = new Array[Byte](2)
+      val buffer = group.getBinary(columnIndex, 0).toByteBuffer
+      buffer.order(Constants.Endian)
+      for (i <- 0 until dim) {
+        buffer.get(float16Bytes)
+        floatVector(i) = FloatConverter.fromBFloat16Bytes(float16Bytes.toSeq)
+      }
       values += floatVector
     })
     values.toList

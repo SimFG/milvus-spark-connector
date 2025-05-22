@@ -298,6 +298,12 @@ class MilvusPartitionReader(
       case MilvusDataType.FloatVector =>
         val floatArray = value.split(",").map(_.toFloat)
         row.update(ordinal, ArrayData.toArrayData(floatArray))
+      case MilvusDataType.Float16Vector =>
+        val floatArray = value.split(",").map(_.toFloat)
+        row.update(ordinal, ArrayData.toArrayData(floatArray))
+      case MilvusDataType.BFloat16Vector =>
+        val floatArray = value.split(",").map(_.toFloat)
+        row.update(ordinal, ArrayData.toArrayData(floatArray))
       // TODO: add support for other vector types
       case _ =>
         logWarning(
