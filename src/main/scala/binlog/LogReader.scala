@@ -229,9 +229,12 @@ object LogReader {
         insertData.datas ++= dataDoubles
       }
       case DataType.Array => {
-        throw new IOException(
-          s"Unsupported data type: ${dataType}, for insert event"
-        )
+        val dataArrays = parquetPayloadReader
+          .getArrayFromPayload(0)
+          .map(array => {
+            array.map(_.toString).mkString(",")
+          })
+        insertData.datas ++= dataArrays
       }
       case DataType.Geometry => {
         throw new IOException(

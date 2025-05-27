@@ -19,6 +19,7 @@ import org.apache.spark.internal.Logging
 
 import com.zilliz.spark.connector.FloatConverter
 import com.zilliz.spark.connector.IntConverter
+import io.milvus.grpc.schema.ScalarField
 
 /** ParquetPayloadReader reads and parses parquet format data from a byte array.
   * This implementation aligns with the Go implementation's
@@ -439,6 +440,44 @@ class ParquetPayloadReader(data: Array[Byte])
       //       .position()}, limit: ${buffer.limit()}, sparseStrs: ${sparseStrs
       //       .mkString(",")}"
       // )
+    })
+    values.toList
+  }
+
+  def getArrayFromPayload(columnIndex: Int): List[Array[String]] = {
+    val values = new ListBuffer[Array[String]]()
+    var lastPos = 0
+    processParquetFile((group, schema) => {
+      val buffer = group.getBinary(columnIndex, 0).toByteBuffer
+      val startPos = buffer.position()
+      val dataLen = buffer.limit() - startPos
+      val arrayBytes = new Array[Byte](dataLen)
+      buffer.get(arrayBytes)
+      val scalarObj = ScalarField.parseFrom(arrayBytes)
+      var arrayValues = new ListBuffer[String]()
+      if (scalarObj.data.isBoolData) {
+        arrayValues ++= scalarObj.getBoolData.data.map(_.toString)
+      } else if (scalarObj.data.isIntData) {
+        arrayValues ++= scalarObj.getIntData.data.map(_.toString)
+      } else if (scalarObj.data.isLongData) {
+        arrayValues ++= scalarObj.getLongData.data.map(_.toString)
+      } else if (scalarObj.data.isFloatData) {
+        arrayValues ++= scalarObj.getFloatData.data.map(_.toString)
+      } else if (scalarObj.data.isDoubleData) {
+        arrayValues ++= scalarObj.getDoubleData.data.map(_.toString)
+      } else if (scalarObj.data.isStringData) {
+        arrayValues ++= scalarObj.getStringData.data.map(_.toString)
+      } else if (scalarObj.data.isBytesData) {
+        arrayValues ++= scalarObj.getBytesData.data.map(_.toString)
+      } else if (scalarObj.data.isArrayData) {
+        arrayValues ++= scalarObj.getArrayData.data.map(_.toString)
+      } else {
+        throw new IOException(
+          s"Unsupported data type: ${scalarObj.data.number}, for insert event"
+        )
+      }
+      values += arrayValues.toArray
+      lastPos = buffer.position()
     })
     values.toList
   }
