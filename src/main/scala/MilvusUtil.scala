@@ -487,10 +487,52 @@ object FloatConverter {
 
     java.lang.Float.intBitsToFloat(float32Bits)
   }
+
+  def fromFloatBytes(bytes: Seq[Byte]): Float = {
+    if (bytes.length != 4) {
+      throw new DataParseException(
+        s"Float requires 4 bytes, but got ${bytes.length}"
+      )
+    }
+    val buffer = ByteBuffer.wrap(bytes.toArray).order(ByteOrder.LITTLE_ENDIAN)
+    buffer.getFloat()
+  }
+
+  def toFloatBytes(value: Float): Seq[Byte] = {
+    val buffer = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN)
+    buffer.putFloat(value)
+    buffer.array()
+  }
+}
+
+object IntConverter {
+  def fromUInt32Bytes(bytes: Seq[Byte]): Long = {
+    if (bytes.length != 4) {
+      throw new DataParseException(
+        s"UInt32 requires 4 bytes, but got ${bytes.length}"
+      )
+    }
+
+    val buffer = ByteBuffer.wrap(bytes.toArray).order(ByteOrder.LITTLE_ENDIAN)
+    val signedInt = buffer.getInt()
+    signedInt & 0xffffffff
+  }
+
+  def toUInt32Bytes(value: Long): Seq[Byte] = {
+    if (value < 0 || value > 0xffffffffL) {
+      throw new IllegalArgumentException(
+        s"Value $value is out of UInt32 range (0 to 4294967295)"
+      )
+    }
+    val buffer = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN)
+    buffer.putInt(value.toInt)
+    buffer.array()
+  }
 }
 
 object SparseFloatVectorConverter {
   def encodeSparseFloatVector(sparse: Map[Long, Float]): Array[Byte] = {
+    // TODO check it
     // 对 Map 的键进行排序（按升序排列）
     val sortedEntries = sparse.toSeq.sortBy(_._1)
 

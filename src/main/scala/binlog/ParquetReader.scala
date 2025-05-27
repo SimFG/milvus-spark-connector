@@ -18,6 +18,7 @@ import org.apache.parquet.schema.{MessageType, PrimitiveType, Type}
 import org.apache.spark.internal.Logging
 
 import com.zilliz.spark.connector.FloatConverter
+import com.zilliz.spark.connector.IntConverter
 
 /** ParquetPayloadReader reads and parses parquet format data from a byte array.
   * This implementation aligns with the Go implementation's
@@ -387,8 +388,59 @@ class ParquetPayloadReader(data: Array[Byte])
   }
 
   def getBinaryVectorFromPayload(columnIndex: Int): List[Array[Byte]] = {
-    // Note: This implementation assumes that the binary vector is stored as a BINARY field
-    getBinaryFromPayload(columnIndex)
+    val values = new ListBuffer[Array[Byte]]()
+    processParquetFile((group, schema) => {
+      val dim =
+        schema.getColumns().get(0).getPrimitiveType().getTypeLength()
+      val binaryVector = new Array[Byte](dim)
+      val buffer = group.getBinary(columnIndex, 0).toByteBuffer
+      buffer.get(binaryVector)
+      values += binaryVector
+    })
+    values.toList
+  }
+
+  def getInt8VectorFromPayload(columnIndex: Int): List[Array[Int]] = {
+    val values = new ListBuffer[Array[Int]]()
+    processParquetFile((group, schema) => {
+      val dim =
+        schema.getColumns().get(0).getPrimitiveType().getTypeLength()
+      val int8Vector = new Array[Int](dim)
+      val buffer = group.getBinary(columnIndex, 0).toByteBuffer
+      for (i <- 0 until dim) {
+        int8Vector(i) = buffer.get().toInt
+      }
+      values += int8Vector
+    })
+    values.toList
+  }
+
+  def getSparseVectorFromPayload(columnIndex: Int): List[Array[Byte]] = {
+    val values = new ListBuffer[Array[Byte]]()
+    processParquetFile((group, schema) => {
+      val buffer = group.getBinary(columnIndex, 0).toByteBuffer
+      val dataLen = (buffer.limit() - buffer.position()) / 8
+      var sparseBytes = new ListBuffer[Byte]()
+      var sparseStrs = new ListBuffer[String]()
+      for (i <- 0L until dataLen) {
+        val idxBytes = new Array[Byte](4)
+        buffer.get(idxBytes)
+        val idx = IntConverter.fromUInt32Bytes(idxBytes.toSeq)
+        val valueBytes = new Array[Byte](4)
+        buffer.get(valueBytes)
+        val value = FloatConverter.fromFloatBytes(valueBytes.toSeq)
+        sparseBytes ++= idxBytes
+        sparseBytes ++= valueBytes
+        sparseStrs += s"($idx, $value)"
+      }
+      values += sparseBytes.toArray
+      // println(
+      //   s"fubang new, dataLen: $dataLen, currentPos: ${buffer
+      //       .position()}, limit: ${buffer.limit()}, sparseStrs: ${sparseStrs
+      //       .mkString(",")}"
+      // )
+    })
+    values.toList
   }
 
   private def isValidColumnAccess(

@@ -244,9 +244,12 @@ object LogReader {
         )
       }
       case DataType.BinaryVector => {
-        throw new IOException(
-          s"Unsupported data type: ${dataType}, for insert event"
-        )
+        val dataBinaryVectors = parquetPayloadReader
+          .getBinaryVectorFromPayload(0)
+          .map(vector => {
+            vector.map(_.toString).mkString(",")
+          })
+        insertData.datas ++= dataBinaryVectors
       }
       case DataType.FloatVector => {
         val dataFloatVectors = parquetPayloadReader
@@ -272,7 +275,22 @@ object LogReader {
           })
         insertData.datas ++= dataBFloat16Vectors
       }
-      // TODO: vector type
+      case DataType.Int8Vector => {
+        val dataInt8Vectors = parquetPayloadReader
+          .getInt8VectorFromPayload(0)
+          .map(vector => {
+            vector.map(_.toString).mkString(",")
+          })
+        insertData.datas ++= dataInt8Vectors
+      }
+      case DataType.SparseFloatVector => {
+        val dataSparseVectors = parquetPayloadReader
+          .getSparseVectorFromPayload(0)
+          .map(vector => {
+            vector.map(_.toString).mkString(",")
+          })
+        insertData.datas ++= dataSparseVectors
+      }
       case _ => {
         throw new IOException(
           s"Unsupported data type: ${dataType}, for insert event"
