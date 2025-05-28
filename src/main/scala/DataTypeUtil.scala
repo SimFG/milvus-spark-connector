@@ -53,9 +53,7 @@ object DataTypeUtil {
       case MilvusDataType.BFloat16Vector =>
         DataTypes.createArrayType(DataTypes.FloatType)
       case MilvusDataType.SparseFloatVector =>
-        DataTypes.createArrayType(
-          DataTypes.createMapType(DataTypes.LongType, DataTypes.FloatType)
-        )
+        DataTypes.createMapType(DataTypes.LongType, DataTypes.FloatType)
       case _ =>
         throw new DataParseException(
           s"Unsupported Milvus data type: $dataType"

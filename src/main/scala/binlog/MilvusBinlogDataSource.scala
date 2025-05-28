@@ -291,7 +291,9 @@ case class MilvusBinlogReaderOptions(
     s3Endpoint: String,
     s3AccessKey: String,
     s3SecretKey: String,
-    s3UseSSL: Boolean
+    s3UseSSL: Boolean,
+    beginTimestamp: Long, // inclusive
+    endTimestamp: Long // exclusive
 ) extends Serializable
     with Logging {
   def notEmpty(str: String): Boolean = str != null && str.trim.nonEmpty
@@ -362,7 +364,9 @@ object MilvusBinlogReaderOptions {
       options.getOrDefault(Constants.S3Endpoint, "localhost:9000"),
       options.getOrDefault(Constants.S3AccessKey, "minioadmin"),
       options.getOrDefault(Constants.S3SecretKey, "minioadmin"),
-      options.getOrDefault(Constants.S3UseSSL, "false").toBoolean
+      options.getOrDefault(Constants.S3UseSSL, "false").toBoolean,
+      options.getOrDefault(Constants.BeginTimestamp, "0").toLong,
+      options.getOrDefault(Constants.EndTimestamp, "0").toLong
     )
   }
 }

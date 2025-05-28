@@ -36,7 +36,7 @@ object LogReader {
       buffer.put(tempBuffer, 0, n)
       bytesRead += n
     }
-    println(s"read buffer len: $bytesRead, size: $size")
+    // println(s"read buffer len: $bytesRead, size: $size")
     buffer.flip() // Prepare for reading from the buffer
     buffer
   }
@@ -301,6 +301,19 @@ object LogReader {
       }
     }
     insertData
+  }
+
+  def stringToLongFloatMap(input: String): Map[Long, Float] = {
+    input
+      .split("\\),\\(") // Split by ")," to get individual (key:value) strings
+      .map(_.filterNot("()".contains(_))) // Remove parentheses
+      .map { s =>
+        val parts = s.split(":") // Split by ":" to separate key and value
+        val key = parts(0).toLong
+        val value = parts(1).toFloat
+        key -> value // Create a (Long, Float) tuple
+      }
+      .toMap // Convert the sequence of tuples to a Map
   }
 
   def read(is: InputStream) = {

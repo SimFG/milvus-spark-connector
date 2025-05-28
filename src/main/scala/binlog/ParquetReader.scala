@@ -416,8 +416,8 @@ class ParquetPayloadReader(data: Array[Byte])
     values.toList
   }
 
-  def getSparseVectorFromPayload(columnIndex: Int): List[Array[Byte]] = {
-    val values = new ListBuffer[Array[Byte]]()
+  def getSparseVectorFromPayload(columnIndex: Int): List[Array[String]] = {
+    val values = new ListBuffer[Array[String]]()
     processParquetFile((group, schema) => {
       val buffer = group.getBinary(columnIndex, 0).toByteBuffer
       val dataLen = (buffer.limit() - buffer.position()) / 8
@@ -432,9 +432,10 @@ class ParquetPayloadReader(data: Array[Byte])
         val value = FloatConverter.fromFloatBytes(valueBytes.toSeq)
         sparseBytes ++= idxBytes
         sparseBytes ++= valueBytes
-        sparseStrs += s"($idx, $value)"
+        sparseStrs += s"($idx:$value)"
       }
-      values += sparseBytes.toArray
+      // values += sparseBytes.toArray
+      values += sparseStrs.toArray
       // println(
       //   s"fubang new, dataLen: $dataLen, currentPos: ${buffer
       //       .position()}, limit: ${buffer.limit()}, sparseStrs: ${sparseStrs

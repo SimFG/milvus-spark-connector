@@ -1,14 +1,20 @@
 package com.zilliz.spark.connector.sources
 
 import java.io.InputStream
+import scala.util.control.Breaks._
 
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 import org.apache.hadoop.fs.s3a.S3AFileSystem
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.catalyst.util.ArrayData
+import org.apache.spark.sql.catalyst.util.{ArrayBasedMapData, ArrayData}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.connector.read.PartitionReader
-import org.apache.spark.sql.types.StringType
+import org.apache.spark.sql.types.{
+  ArrayType,
+  DataTypes => SparkDataTypes,
+  StringType,
+  StructType
+}
 import org.apache.spark.unsafe.types.UTF8String
 
 import com.zilliz.spark.connector.binlog.{
@@ -23,6 +29,7 @@ import com.zilliz.spark.connector.binlog.DescriptorEvent
 import io.milvus.grpc.schema.{DataType => MilvusDataType}
 
 class MilvusPartitionReader(
+    schema: StructType,
     fieldFiles: Map[String, String],
     options: MilvusBinlogReaderOptions
 ) extends PartitionReader[InternalRow]
@@ -39,6 +46,7 @@ class MilvusPartitionReader(
     def readNextRecord()
         : String // Read and parse the next record, return the single field value
     def getDataType(): MilvusDataType // Get the data type of the field
+    def moveToNextRecord(): Unit // Move to the next record
     def close(): Unit // Close the file stream
   }
 
@@ -71,13 +79,13 @@ class MilvusPartitionReader(
       Constants.LogReaderTypeInsert // Placeholder - determine actual type
 
     override def open(): Unit = {
-      logInfo(s"Opening field file: $filePath")
+      // logInfo(s"Opening field file: $filePath")
       fs = options.getFileSystem(path)
       inputStream = fs.open(path)
       // Read descriptor event to get data type
       descriptorEvent = LogReader.readDescriptorEvent(inputStream)
       dataType = descriptorEvent.data.payloadDataType
-      logInfo(s"Opened file $filePath. Data type: $dataType")
+      // logInfo(s"Opened file $filePath. Data type: $dataType")
     }
 
     override def getDataType(): MilvusDataType = dataType
@@ -101,8 +109,6 @@ class MilvusPartitionReader(
       if (insertEvent == null) {
         insertEvent =
           LogReader.readInsertEvent(inputStream, objectMapper, dataType)
-      } else {
-        currentIndex += 1
       }
 
       insertEvent != null
@@ -116,8 +122,6 @@ class MilvusPartitionReader(
       if (deleteEvent == null) {
         deleteEvent =
           LogReader.readDeleteEvent(inputStream, objectMapper, dataType)
-      } else {
-        currentIndex += 1
       }
 
       deleteEvent != null
@@ -132,6 +136,10 @@ class MilvusPartitionReader(
             s"Unknown reader type for file $filePath: $currentReaderType"
           )
       }
+    }
+
+    override def moveToNextRecord(): Unit = {
+      currentIndex += 1
     }
 
     private def readNextInsertRecord(): String = {
@@ -202,6 +210,31 @@ class MilvusPartitionReader(
       return false
     }
 
+    val timestampFieldReader = fieldFileReaders.getOrElse(
+      Constants.TimestampFieldID,
+      throw new IllegalStateException(
+        s"Timestamp field not found in partition"
+      )
+    )
+    if (options.beginTimestamp > 0 || options.endTimestamp > 0) {
+      breakable {
+        while (timestampFieldReader.hasNext()) {
+          val timestamp = timestampFieldReader.readNextRecord()
+          if (
+            (timestamp.toLong < options.beginTimestamp && options.beginTimestamp > 0) ||
+            (timestamp.toLong >= options.endTimestamp && options.endTimestamp > 0)
+          ) {
+            fieldFileReaders.values.foreach { reader =>
+              reader.moveToNextRecord()
+              reader.hasNext()
+            }
+          } else {
+            break
+          }
+        }
+      }
+    }
+
     // Check if ALL field readers have a next record
     val allHaveNext = fieldFileReaders.values.forall(_.hasNext())
 
@@ -242,6 +275,7 @@ class MilvusPartitionReader(
         case Some(reader) =>
           try {
             val fieldValue = reader.readNextRecord()
+            reader.moveToNextRecord()
             setInternalRowValue(
               row,
               index,
@@ -280,6 +314,7 @@ class MilvusPartitionReader(
       row.setNullAt(ordinal)
       return
     }
+    val sparkFieldType = schema.fields(ordinal).dataType
     dataType match {
       case MilvusDataType.String | MilvusDataType.VarChar |
           MilvusDataType.JSON =>
@@ -304,6 +339,53 @@ class MilvusPartitionReader(
       case MilvusDataType.BFloat16Vector =>
         val floatArray = value.split(",").map(_.toFloat)
         row.update(ordinal, ArrayData.toArrayData(floatArray))
+      case MilvusDataType.BinaryVector =>
+        val binaryArray = value.split(",").map(_.toByte)
+        row.update(ordinal, ArrayData.toArrayData(binaryArray))
+      case MilvusDataType.Int8Vector =>
+        val int8Array = value.split(",").map(_.toByte)
+        row.update(ordinal, ArrayData.toArrayData(int8Array))
+      case MilvusDataType.SparseFloatVector =>
+        val sparseMap = LogReader.stringToLongFloatMap(value)
+        row.update(
+          ordinal,
+          ArrayBasedMapData.apply(
+            sparseMap.keys.toArray,
+            sparseMap.values.toArray
+          )
+        )
+      case MilvusDataType.Array =>
+        if (sparkFieldType.isInstanceOf[ArrayType]) {
+          val sparkArrayType = sparkFieldType.asInstanceOf[ArrayType]
+          sparkArrayType.elementType match {
+            case SparkDataTypes.BooleanType =>
+              val array = value.split(",").map(_.toBoolean)
+              row.update(ordinal, ArrayData.toArrayData(array))
+            case SparkDataTypes.IntegerType =>
+              val array = value.split(",").map(_.toInt)
+              row.update(ordinal, ArrayData.toArrayData(array))
+            case SparkDataTypes.LongType =>
+              val array = value.split(",").map(_.toLong)
+              row.update(ordinal, ArrayData.toArrayData(array))
+            case SparkDataTypes.FloatType =>
+              val array = value.split(",").map(_.toFloat)
+              row.update(ordinal, ArrayData.toArrayData(array))
+            case SparkDataTypes.DoubleType =>
+              val array = value.split(",").map(_.toDouble)
+              row.update(ordinal, ArrayData.toArrayData(array))
+            case SparkDataTypes.StringType =>
+              val array = value.split(",")
+              row.update(ordinal, ArrayData.toArrayData(array))
+            case _ =>
+              throw new UnsupportedOperationException(
+                s"Unsupported data type for setting value at ordinal $ordinal: $dataType"
+              )
+          }
+        } else {
+          throw new UnsupportedOperationException(
+            s"Unsupported data type for setting value at ordinal $ordinal: $dataType"
+          )
+        }
       // TODO: add support for other vector types
       case _ =>
         logWarning(

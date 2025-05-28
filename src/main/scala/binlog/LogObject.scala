@@ -48,6 +48,11 @@ object Constants {
   val S3SecretKey = "s3.password"
   val S3UseSSL = "s3.useSSL"
 
+  val BeginTimestamp = "beginTimestamp"
+  val EndTimestamp = "endTimestamp"
+
+  val TimestampFieldID = "1"
+
   def readMagicNumber(buffer: ByteBuffer) = {
     val num = buffer.getInt()
     if (num != MagicNumber) {

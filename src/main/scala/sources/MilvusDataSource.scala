@@ -211,7 +211,6 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
   }
 
   override def readSchema(): StructType = {
-    logInfo(s"MilvusScan.readSchema() returning: ${schema.simpleString}")
     schema
   }
 
@@ -276,7 +275,7 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
         filePathMap(filedID) = Seq(fileName)
       }
     })
-    logInfo(s"fubang filePathMap: $filePathMap")
+    // logInfo(s"filePathMap: $filePathMap")
 
     // Sort the file names in ascending order for each field ID
     filePathMap.foreach { case (fieldId, fileNames) =>
@@ -286,7 +285,7 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
     val fieldMaps = filePathMap.head._2.indices.map { i =>
       filePathMap.map { case (fieldId, fileNames) =>
         val fullPath = s"${rootPath.toString()}/${fieldId}/${fileNames(i)}"
-        logInfo(s"fubang fullPath: $fullPath")
+        // logInfo(s"field file fullPath: $fullPath")
         fieldId -> fullPath
       }.toMap
     }.toList
@@ -390,6 +389,6 @@ class MilvusReaderFactory(
   ): PartitionReader[InternalRow] = {
     val milvusPartition = partition.asInstanceOf[MilvusInputPartition]
     // Create the data reader with the file map, schema, and options
-    new MilvusPartitionReader(milvusPartition.fieldFiles, readerOptions)
+    new MilvusPartitionReader(schema, milvusPartition.fieldFiles, readerOptions)
   }
 }
