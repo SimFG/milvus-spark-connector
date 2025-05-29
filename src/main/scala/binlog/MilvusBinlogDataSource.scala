@@ -78,8 +78,8 @@ class MilvusBinlogDataSource
       properties: java.util.Map[String, String]
   ): Table = {
     logInfo(s"getTable schema, properties: $properties")
-    val path = properties.get("path")
-    val collection = properties.get(MilvusOption.MILVUS_COLLECTION_ID)
+    val path = properties.get(MilvusOption.ReaderPath)
+    val collection = properties.get(MilvusOption.MilvusCollectionID)
     if (path == null && collection == null) {
       throw new IllegalArgumentException(
         "Option 'path' or 'collection' is required for milvusbinlog format."
@@ -159,14 +159,14 @@ class MilvusBinlogScan(schema: StructType, options: CaseInsensitiveStringMap)
 
   def getPathOption(): String = {
     if (!readerOptions.notEmpty(readerOptions.s3FileSystemType)) {
-      return options.get("path")
+      return options.get(MilvusOption.ReaderPath)
     }
     val collection = milvusOption.collectionID
     val partition = milvusOption.partitionID
     val segment = milvusOption.segmentID
     val field = milvusOption.fieldID
     if (collection.isEmpty) {
-      return options.get("path")
+      return options.get(MilvusOption.ReaderPath)
     }
     if (
       readerOptions.readerType == Constants.LogReaderTypeInsert && field.isEmpty
@@ -368,8 +368,8 @@ object MilvusBinlogReaderOption {
       options.getOrDefault(Constants.S3AccessKey, "minioadmin"),
       options.getOrDefault(Constants.S3SecretKey, "minioadmin"),
       options.getOrDefault(Constants.S3UseSSL, "false").toBoolean,
-      options.getOrDefault(Constants.BeginTimestamp, "0").toLong,
-      options.getOrDefault(Constants.EndTimestamp, "0").toLong
+      options.getOrDefault(Constants.LogReaderBeginTimestamp, "0").toLong,
+      options.getOrDefault(Constants.LogReaderEndTimestamp, "0").toLong
     )
   }
 }

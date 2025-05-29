@@ -4,6 +4,7 @@ import scala.collection.Map
 
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
+import com.zilliz.spark.connector.binlog.Constants
 import com.zilliz.spark.connector.MilvusConnectionException
 
 case class MilvusOption(
@@ -23,40 +24,50 @@ case class MilvusOption(
 
 object MilvusOption {
   // Constants for map keys
-  val URI_KEY = "milvus.uri"
-  val TOKEN_KEY = "milvus.token"
-  val MILVUS_DATABASE_NAME = "milvus.database.name"
-  val MILVUS_COLLECTION_NAME = "milvus.collection.name"
-  val MILVUS_PARTITION_NAME = "milvus.partition.name"
-  val MILVUS_COLLECTION_ID = "milvus.collection.id"
-  val MILVUS_PARTITION_ID = "milvus.partition.id"
-  val MILVUS_SEGMENT_ID = "milvus.segment.id"
-  val MILVUS_FIELD_ID = "milvus.field.id"
-  val MILVUS_INSERT_MAX_BATCHSIZE = "milvus.insertMaxBatchSize"
-  val MILVUS_RETRY_COUNT = "milvus.retry.count"
-  val MILVUS_RETRY_INTERVAL = "milvus.retry.interval"
+  val MilvusUri = "milvus.uri"
+  val MilvusToken = "milvus.token"
+  val MilvusDatabaseName = "milvus.database.name"
+  val MilvusCollectionName = "milvus.collection.name"
+  val MilvusPartitionName = "milvus.partition.name"
+  val MilvusCollectionID = "milvus.collection.id"
+  val MilvusPartitionID = "milvus.partition.id"
+  val MilvusSegmentID = "milvus.segment.id"
+  val MilvusFieldID = "milvus.field.id"
+  val MilvusInsertMaxBatchSize = "milvus.insertMaxBatchSize"
+  val MilvusRetryCount = "milvus.retry.count"
+  val MilvusRetryInterval = "milvus.retry.interval"
+
+  // reader config
+  val ReaderPath = Constants.LogReaderPathParamName
+  val ReaderType = Constants.LogReaderTypeParamName
+  val ReaderBeginTimestamp = Constants.LogReaderBeginTimestamp
+  val ReaderEndTimestamp = Constants.LogReaderEndTimestamp
+
+  // s3 config
+  val S3FileSystemTypeName = Constants.S3FileSystemTypeName
+  val S3Endpoint = Constants.S3Endpoint
+  val S3BucketName = Constants.S3BucketName
+  val S3RootPath = Constants.S3RootPath
+  val S3AccessKey = Constants.S3AccessKey
+  val S3SecretKey = Constants.S3SecretKey
+  val S3UseSSL = Constants.S3UseSSL
 
   // Create MilvusOption from a map
   def apply(options: CaseInsensitiveStringMap): MilvusOption = {
-    val uri = options.getOrDefault(URI_KEY, "")
-    val token = options.getOrDefault(TOKEN_KEY, "")
-    val databaseName = options.getOrDefault(MILVUS_DATABASE_NAME, "")
-    val collectionName = options.getOrDefault(MILVUS_COLLECTION_NAME, "")
-    val partitionName = options.getOrDefault(MILVUS_PARTITION_NAME, "")
-    val collectionID = options.getOrDefault(MILVUS_COLLECTION_ID, "")
-    val partitionID = options.getOrDefault(MILVUS_PARTITION_ID, "")
-    val segmentID = options.getOrDefault(MILVUS_SEGMENT_ID, "")
-    val fieldID = options.getOrDefault(MILVUS_FIELD_ID, "")
+    val uri = options.getOrDefault(MilvusUri, "")
+    val token = options.getOrDefault(MilvusToken, "")
+    val databaseName = options.getOrDefault(MilvusDatabaseName, "")
+    val collectionName = options.getOrDefault(MilvusCollectionName, "")
+    val partitionName = options.getOrDefault(MilvusPartitionName, "")
+    val collectionID = options.getOrDefault(MilvusCollectionID, "")
+    val partitionID = options.getOrDefault(MilvusPartitionID, "")
+    val segmentID = options.getOrDefault(MilvusSegmentID, "")
+    val fieldID = options.getOrDefault(MilvusFieldID, "")
     val insertMaxBatchSize =
-      options.getOrDefault(MILVUS_INSERT_MAX_BATCHSIZE, "5000").toInt
-    val retryCount = options.getOrDefault(MILVUS_RETRY_COUNT, "3").toInt
+      options.getOrDefault(MilvusInsertMaxBatchSize, "5000").toInt
+    val retryCount = options.getOrDefault(MilvusRetryCount, "3").toInt
     val retryInterval =
-      options.getOrDefault(MILVUS_RETRY_INTERVAL, "1000").toInt
-
-    // Validate uri and databaseName
-    if (uri.isEmpty) {
-      throw new MilvusConnectionException("Milvus URI cannot be empty")
-    }
+      options.getOrDefault(MilvusRetryInterval, "1000").toInt
 
     MilvusOption(
       uri,

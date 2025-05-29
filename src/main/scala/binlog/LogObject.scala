@@ -34,10 +34,12 @@ object Constants {
   val DeletePkColumnName = "pk"
 
   // reader param constant
-  val LogPathParamName = "path"
-  val LogReaderTypeParamName = "readerType"
+  val LogReaderPathParamName = "reader.path"
+  val LogReaderTypeParamName = "reader.type"
   val LogReaderTypeInsert = "insert"
   val LogReaderTypeDelete = "delete"
+  val LogReaderBeginTimestamp = "reader.ts.begin"
+  val LogReaderEndTimestamp = "reader.ts.end"
 
   // s3 config
   val S3FileSystemTypeName = "s3.fs" // default: s3a://
@@ -47,9 +49,6 @@ object Constants {
   val S3AccessKey = "s3.user"
   val S3SecretKey = "s3.password"
   val S3UseSSL = "s3.useSSL"
-
-  val BeginTimestamp = "beginTimestamp"
-  val EndTimestamp = "endTimestamp"
 
   val TimestampFieldID = "1"
 

@@ -58,8 +58,14 @@ case class MilvusDataSource() extends TableProvider with DataSourceRegister {
       properties: ju.Map[String, String]
   ): Table = {
     val options = new CaseInsensitiveStringMap(properties)
+    val milvusOption = MilvusOption(options)
+    if (milvusOption.uri.isEmpty) {
+      throw new IllegalArgumentException(
+        s"Option '${MilvusOption.MilvusUri}' is required for reading milvus data."
+      )
+    }
     MilvusTable(
-      MilvusOption(options),
+      milvusOption,
       Some(schema)
     )
   }
@@ -134,9 +140,9 @@ case class MilvusTable(
     val mergedOptions: JMap[String, String] = new HashMap[String, String]()
     mergedOptions.putAll(properties)
     mergedOptions.putAll(options)
-    if (mergedOptions.get(MilvusOption.MILVUS_COLLECTION_ID) == null) {
+    if (mergedOptions.get(MilvusOption.MilvusCollectionID) == null) {
       mergedOptions.put(
-        MilvusOption.MILVUS_COLLECTION_ID,
+        MilvusOption.MilvusCollectionID,
         milvusCollection.collectionID.toString
       )
     }
@@ -198,8 +204,8 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
   }
 
   def getPathOption(): String = {
-    if (options.get("path") != null) {
-      return options.get("path")
+    if (options.get(MilvusOption.ReaderPath) != null) {
+      return options.get(MilvusOption.ReaderPath)
     }
     val collection = milvusOption.collectionID
     val partition = milvusOption.partitionID
@@ -327,7 +333,7 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
     val fs = readerOption.getFileSystem(rootPath)
 
     // segment path
-    val rawPath = options.getOrDefault("path", "")
+    val rawPath = options.getOrDefault(MilvusOption.ReaderPath, "")
     val collection = milvusOption.collectionID
     val partition = milvusOption.partitionID
     val segment = milvusOption.segmentID
