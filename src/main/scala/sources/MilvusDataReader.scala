@@ -23,7 +23,7 @@ import com.zilliz.spark.connector.binlog.{
   DescriptorEventData,
   InsertEventData,
   LogReader,
-  MilvusBinlogReaderOptions
+  MilvusBinlogReaderOption
 }
 import com.zilliz.spark.connector.binlog.DescriptorEvent
 import io.milvus.grpc.schema.{DataType => MilvusDataType}
@@ -31,7 +31,7 @@ import io.milvus.grpc.schema.{DataType => MilvusDataType}
 class MilvusPartitionReader(
     schema: StructType,
     fieldFiles: Map[String, String],
-    options: MilvusBinlogReaderOptions
+    options: MilvusBinlogReaderOption
 ) extends PartitionReader[InternalRow]
     with Logging {
   private val readerType: String = options.readerType
@@ -52,7 +52,7 @@ class MilvusPartitionReader(
 
   private class MilvusBinlogFieldFileReader(
       filePath: String,
-      options: MilvusBinlogReaderOptions
+      options: MilvusBinlogReaderOption
   ) extends FieldFileReader
       with Logging {
     private val path = options.getFilePath(filePath)

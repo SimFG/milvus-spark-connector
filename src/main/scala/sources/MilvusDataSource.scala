@@ -46,7 +46,9 @@ import org.apache.spark.sql.types.{LongType, StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 import com.zilliz.spark.connector.{DataTypeUtil, MilvusClient, MilvusOption}
-import com.zilliz.spark.connector.binlog.MilvusBinlogReaderOptions
+import com.zilliz.spark.connector.binlog.MilvusBinlogReaderOption
+import com.zilliz.spark.connector.MilvusCollectionInfo
+import com.zilliz.spark.connector.MilvusSegmentInfo
 
 // 1. DataSourceRegister and TableProvider
 case class MilvusDataSource() extends TableProvider with DataSourceRegister {
@@ -55,18 +57,15 @@ case class MilvusDataSource() extends TableProvider with DataSourceRegister {
       partitioning: Array[Transform],
       properties: ju.Map[String, String]
   ): Table = {
-    val options = Map.newBuilder[String, String]
-    properties.forEach((key, value) => options.addOne(key, value))
+    val options = new CaseInsensitiveStringMap(properties)
     MilvusTable(
-      MilvusOption(options.result()),
+      MilvusOption(options),
       Some(schema)
     )
   }
 
   override def inferSchema(options: CaseInsensitiveStringMap): StructType = {
-    val optionsMap = Map.newBuilder[String, String]
-    options.forEach((key, value) => optionsMap.addOne(key, value))
-    val milvusOption = MilvusOption(optionsMap.result())
+    val milvusOption = MilvusOption(options)
     val client = MilvusClient(milvusOption)
     try {
       val result = client.getCollectionSchema(
@@ -104,13 +103,16 @@ case class MilvusTable(
     with SupportsWrite
     with SupportsRead
     with Logging {
-  lazy val milvusCollection = {
+  var milvusCollection: MilvusCollectionInfo = _
+  initInfo()
+
+  def initInfo(): Unit = {
     val client = MilvusClient(milvusOption)
     try {
-      client
+      milvusCollection = client
         .getCollectionInfo(
-          dbName = milvusOption.databaseName,
-          collectionName = milvusOption.collectionName
+          milvusOption.databaseName,
+          milvusOption.collectionName
         )
         .getOrElse(
           throw new Exception(
@@ -132,6 +134,12 @@ case class MilvusTable(
     val mergedOptions: JMap[String, String] = new HashMap[String, String]()
     mergedOptions.putAll(properties)
     mergedOptions.putAll(options)
+    if (mergedOptions.get(MilvusOption.MILVUS_COLLECTION_ID) == null) {
+      mergedOptions.put(
+        MilvusOption.MILVUS_COLLECTION_ID,
+        milvusCollection.collectionID.toString
+      )
+    }
     val allOptions = new CaseInsensitiveStringMap(mergedOptions)
     new MilvusScanBuilder(schema(), allOptions)
   }
@@ -180,21 +188,22 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
     extends Scan
     with Batch
     with Logging {
+  private val milvusOption = MilvusOption(options)
+  private val readerOption = MilvusBinlogReaderOption(options)
   private val pathOption: String = getPathOption()
   if (pathOption == null) {
     throw new IllegalArgumentException(
       "Option 'path' is required for mybinlog files."
     )
   }
-  private val readerOptions = MilvusBinlogReaderOptions(options)
 
   def getPathOption(): String = {
     if (options.get("path") != null) {
       return options.get("path")
     }
-    val collection = options.getOrDefault("collection", "")
-    val partition = options.getOrDefault("partition", "")
-    val segment = options.getOrDefault("segment", "")
+    val collection = milvusOption.collectionID
+    val partition = milvusOption.partitionID
+    val segment = milvusOption.segmentID
     val firstPath = "insert_log"
     if (collection.isEmpty) {
       throw new IllegalArgumentException(
@@ -292,17 +301,41 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
     return fieldMaps
   }
 
+  def getValidSegments(): Seq[String] = {
+    val client = MilvusClient(milvusOption)
+    try {
+      val result = client.getSegments(
+        milvusOption.databaseName,
+        milvusOption.collectionName
+      )
+      result
+        .getOrElse(
+          throw new Exception(
+            s"Failed to get segment info: ${result.failed.get.getMessage}"
+          )
+        )
+        .map(_.segmentID.toString)
+    } finally {
+      client.close()
+    }
+  }
+
   override def toBatch: Batch = this
 
   override def planInputPartitions(): Array[InputPartition] = {
-    val rootPath = readerOptions.getFilePath(pathOption)
-    val fs = readerOptions.getFileSystem(rootPath)
+    val rootPath = readerOption.getFilePath(pathOption)
+    val fs = readerOption.getFileSystem(rootPath)
 
     // segment path
     val rawPath = options.getOrDefault("path", "")
-    val collection = options.getOrDefault("collection", "")
-    val partition = options.getOrDefault("partition", "")
-    val segment = options.getOrDefault("segment", "")
+    val collection = milvusOption.collectionID
+    val partition = milvusOption.partitionID
+    val segment = milvusOption.segmentID
+
+    var validSegments = Seq[String]()
+    if (segment.isEmpty()) {
+      validSegments = getValidSegments()
+    }
 
     var fieldMaps = Seq[Map[String, String]]()
     if (rawPath.isEmpty) {
@@ -310,17 +343,21 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
         fieldMaps ++= getSegmentFieldMap(fs, rootPath)
       } else if (!partition.isEmpty()) {
         var segmentStatuses = getCollectionOrPartitionStatuses(fs, rootPath)
-        segmentStatuses.foreach(status => {
-          fieldMaps ++= getSegmentFieldMap(fs, status.getPath())
-        })
+        segmentStatuses
+          .filter(status => validSegments.contains(status.getPath().getName))
+          .foreach(status => {
+            fieldMaps ++= getSegmentFieldMap(fs, status.getPath())
+          })
       } else {
         var partitionStatuses = getCollectionOrPartitionStatuses(fs, rootPath)
         partitionStatuses.foreach(status => {
           val segmentStatuses =
             getCollectionOrPartitionStatuses(fs, status.getPath())
-          segmentStatuses.foreach(status => {
-            fieldMaps ++= getSegmentFieldMap(fs, status.getPath())
-          })
+          segmentStatuses
+            .filter(status => validSegments.contains(status.getPath().getName))
+            .foreach(status => {
+              fieldMaps ++= getSegmentFieldMap(fs, status.getPath())
+            })
         })
       }
     } else {
@@ -382,7 +419,7 @@ class MilvusReaderFactory(
     options: CaseInsensitiveStringMap
 ) extends PartitionReaderFactory {
 
-  private val readerOptions = MilvusBinlogReaderOptions(options)
+  private val readerOptions = MilvusBinlogReaderOption(options)
 
   override def createReader(
       partition: InputPartition

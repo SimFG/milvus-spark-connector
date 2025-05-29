@@ -13,12 +13,14 @@ import io.milvus.grpc.common.{
   KeyValuePair,
   Status
 }
+import io.milvus.grpc.common.{SegmentLevel, SegmentState}
 import io.milvus.grpc.milvus.{
   ConnectRequest,
   CreateCollectionRequest,
   CreateDatabaseRequest,
   DeleteRequest,
   DescribeCollectionRequest,
+  GetPersistentSegmentInfoRequest,
   InsertRequest,
   MilvusServiceGrpc,
   MutationResult
@@ -379,6 +381,37 @@ class MilvusClient(params: MilvusConnectionParams) {
     }
   }
 
+  def getSegments(
+      dbName: String,
+      collectionName: String
+  ): Try[Seq[MilvusSegmentInfo]] = {
+    try {
+      val segments = stub.getPersistentSegmentInfo(
+        GetPersistentSegmentInfoRequest(
+          dbName = dbName,
+          collectionName = collectionName
+        )
+      )
+      Success(
+        segments.infos.map(info =>
+          MilvusSegmentInfo(
+            segmentID = info.segmentID,
+            collectionID = info.collectionID,
+            partitionID = info.partitionID,
+            numRows = info.numRows,
+            state = info.state,
+            level = info.level
+          )
+        )
+      )
+    } catch {
+      case e: Exception =>
+        Failure(
+          new Exception(s"Failed to get segments: ${e.getMessage}")
+        )
+    }
+  }
+
   def close(): Unit = {
     channel.shutdownNow()
   }
@@ -406,6 +439,15 @@ case class MilvusCollectionInfo(
     collectionName: String,
     collectionID: Long,
     schema: CollectionSchema
+)
+
+case class MilvusSegmentInfo(
+    segmentID: Long,
+    collectionID: Long,
+    partitionID: Long,
+    numRows: Long,
+    state: SegmentState,
+    level: SegmentLevel
 )
 
 trait PKProcessor[T] {

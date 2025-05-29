@@ -31,6 +31,8 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.unsafe.types.UTF8String
 
+import com.zilliz.spark.connector.MilvusOption
+
 // 1. DataSourceRegister and TableProvider
 class MilvusBinlogDataSource
     extends DataSourceRegister
@@ -77,7 +79,7 @@ class MilvusBinlogDataSource
   ): Table = {
     logInfo(s"getTable schema, properties: $properties")
     val path = properties.get("path")
-    val collection = properties.get("collection")
+    val collection = properties.get(MilvusOption.MILVUS_COLLECTION_ID)
     if (path == null && collection == null) {
       throw new IllegalArgumentException(
         "Option 'path' or 'collection' is required for milvusbinlog format."
@@ -146,7 +148,8 @@ class MilvusBinlogScan(schema: StructType, options: CaseInsensitiveStringMap)
     extends Scan
     with Batch
     with Logging {
-  private val readerOptions = MilvusBinlogReaderOptions(options)
+  private val milvusOption = MilvusOption(options)
+  private val readerOptions = MilvusBinlogReaderOption(options)
   private val pathOption: String = getPathOption()
   if (pathOption == null) {
     throw new IllegalArgumentException(
@@ -158,10 +161,10 @@ class MilvusBinlogScan(schema: StructType, options: CaseInsensitiveStringMap)
     if (!readerOptions.notEmpty(readerOptions.s3FileSystemType)) {
       return options.get("path")
     }
-    val collection = options.getOrDefault("collection", "")
-    val partition = options.getOrDefault("partition", "")
-    val segment = options.getOrDefault("segment", "")
-    val field = options.getOrDefault("field", "")
+    val collection = milvusOption.collectionID
+    val partition = milvusOption.partitionID
+    val segment = milvusOption.segmentID
+    val field = milvusOption.fieldID
     if (collection.isEmpty) {
       return options.get("path")
     }
@@ -229,10 +232,10 @@ class MilvusBinlogScan(schema: StructType, options: CaseInsensitiveStringMap)
     var fileStatuses = Seq[FileStatus]()
     val fs = readerOptions.getFileSystem(path)
 
-    val collection = options.getOrDefault("collection", "")
-    val partition = options.getOrDefault("partition", "")
-    val segment = options.getOrDefault("segment", "")
-    val field = options.getOrDefault("field", "")
+    val collection = milvusOption.collectionID
+    val partition = milvusOption.partitionID
+    val segment = milvusOption.segmentID
+    val field = milvusOption.fieldID
     if (
       readerOptions.notEmpty(
         readerOptions.s3FileSystemType
@@ -283,7 +286,7 @@ class MilvusBinlogScan(schema: StructType, options: CaseInsensitiveStringMap)
 
 case class MilvusBinlogInputPartition(filePath: String) extends InputPartition
 
-case class MilvusBinlogReaderOptions(
+case class MilvusBinlogReaderOption(
     readerType: String,
     s3FileSystemType: String,
     s3BucketName: String,
@@ -354,9 +357,9 @@ case class MilvusBinlogReaderOptions(
   }
 }
 
-object MilvusBinlogReaderOptions {
-  def apply(options: CaseInsensitiveStringMap): MilvusBinlogReaderOptions = {
-    new MilvusBinlogReaderOptions(
+object MilvusBinlogReaderOption {
+  def apply(options: CaseInsensitiveStringMap): MilvusBinlogReaderOption = {
+    new MilvusBinlogReaderOption(
       options.get(Constants.LogReaderTypeParamName),
       options.get(Constants.S3FileSystemTypeName),
       options.getOrDefault(Constants.S3BucketName, "a-bucket"),
@@ -375,7 +378,7 @@ object MilvusBinlogReaderOptions {
 class MilvusBinlogPartitionReaderFactory(options: CaseInsensitiveStringMap)
     extends PartitionReaderFactory {
 
-  private val readerOptions = MilvusBinlogReaderOptions(options)
+  private val readerOptions = MilvusBinlogReaderOption(options)
 
   override def createReader(
       partition: InputPartition
@@ -388,7 +391,7 @@ class MilvusBinlogPartitionReaderFactory(options: CaseInsensitiveStringMap)
 // 6. PartitionReader
 class MilvusBinlogPartitionReader(
     filePath: String,
-    options: MilvusBinlogReaderOptions
+    options: MilvusBinlogReaderOption
 ) extends PartitionReader[InternalRow]
     with Logging {
   private val readerType: String = options.readerType
