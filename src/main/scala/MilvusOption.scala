@@ -10,6 +10,10 @@ import com.zilliz.spark.connector.MilvusConnectionException
 case class MilvusOption(
     uri: String,
     token: String = "",
+    serverPemPath: String = "",
+    clientKeyPath: String = "",
+    clientPemPath: String = "",
+    caPemPath: String = "",
     databaseName: String = "",
     collectionName: String = "",
     partitionName: String = "",
@@ -26,6 +30,10 @@ object MilvusOption {
   // Constants for map keys
   val MilvusUri = "milvus.uri"
   val MilvusToken = "milvus.token"
+  val MilvusServerPemPath = "milvus.server.pem"
+  val MilvusClientKeyPath = "milvus.client.key"
+  val MilvusClientPemPath = "milvus.client.pem"
+  val MilvusCaPemPath = "milvus.ca.pem"
   val MilvusDatabaseName = "milvus.database.name"
   val MilvusCollectionName = "milvus.collection.name"
   val MilvusPartitionName = "milvus.partition.name"
@@ -56,6 +64,11 @@ object MilvusOption {
   def apply(options: CaseInsensitiveStringMap): MilvusOption = {
     val uri = options.getOrDefault(MilvusUri, "")
     val token = options.getOrDefault(MilvusToken, "")
+    val serverPemPath = options.getOrDefault(MilvusServerPemPath, "")
+    val clientKeyPath = options.getOrDefault(MilvusClientKeyPath, "")
+    val clientPemPath = options.getOrDefault(MilvusClientPemPath, "")
+    val caPemPath = options.getOrDefault(MilvusCaPemPath, "")
+
     val databaseName = options.getOrDefault(MilvusDatabaseName, "")
     val collectionName = options.getOrDefault(MilvusCollectionName, "")
     val partitionName = options.getOrDefault(MilvusPartitionName, "")
@@ -72,6 +85,10 @@ object MilvusOption {
     MilvusOption(
       uri,
       token,
+      serverPemPath,
+      clientKeyPath,
+      clientPemPath,
+      caPemPath,
       databaseName,
       collectionName,
       partitionName,

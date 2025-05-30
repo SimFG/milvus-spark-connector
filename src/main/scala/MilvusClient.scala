@@ -1,6 +1,11 @@
 package com.zilliz.spark.connector
 
+import java.io.File
 import java.net.URI
+import java.nio.charset.StandardCharsets
+import java.util.concurrent.TimeUnit
+import java.util.Base64
+import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.jdk.CollectionConverters._
 import scala.util.{Failure, Success, Try}
 
@@ -34,11 +39,21 @@ import io.milvus.grpc.schema.{
   ValueField
 }
 
-import io.grpc.{ManagedChannel, ManagedChannelBuilder}
+import io.grpc._
+import io.grpc.{ClientInterceptor, Metadata, Status => GrpcStatus}
+import io.grpc.netty.shaded.io.grpc.netty.{GrpcSslContexts, NettyChannelBuilder}
+import io.grpc.stub.MetadataUtils
+import io.grpc.Status.Code
 
 /** A simplified client for interacting with Milvus
   */
 class MilvusClient(params: MilvusConnectionParams) {
+  private val retryInterceptor = new GrpcRetryInterceptor(
+    maxRetries = 5,
+    initialDelayMillis = 500,
+    delayMultiplier = 2.0,
+    maxDelayMillis = 5000
+  )
   private lazy val channel: ManagedChannel = {
     val uri = new URI(params.uri)
     val scheme = uri.getScheme
@@ -52,17 +67,59 @@ class MilvusClient(params: MilvusConnectionParams) {
         port = 80
       }
     }
-    // TODO fubang: add tls support
-    var channelBuilder = ManagedChannelBuilder
-      .forAddress(host, port)
-      .usePlaintext()
+
+    val interceptors = Seq(
+      getConnectionMetadataInterceptor(),
+      retryInterceptor
+    )
+    var channelBuilder = if (params.serverPemPath.nonEmpty) {
+      val sslContext = GrpcSslContexts
+        .forClient()
+        .trustManager(
+          new File(params.serverPemPath)
+        )
+        .build()
+      NettyChannelBuilder
+        .forAddress(host, port)
+        .sslContext(sslContext)
+    } else if (
+      params.clientKeyPath.nonEmpty && params.clientPemPath.nonEmpty && params.caPemPath.nonEmpty
+    ) {
+      val sslContext = GrpcSslContexts
+        .forClient()
+        .keyManager(
+          new File(params.clientKeyPath),
+          new File(params.clientPemPath)
+        )
+        .trustManager(new File(params.caPemPath))
+        .build()
+      NettyChannelBuilder
+        .forAddress(host, port)
+        .sslContext(sslContext)
+    } else {
+      NettyChannelBuilder
+        .forAddress(host, port)
+        .usePlaintext()
+    }
+    channelBuilder = channelBuilder
+      .maxInboundMessageSize(Integer.MAX_VALUE)
+      .keepAliveTime(60, TimeUnit.SECONDS)
+      .keepAliveTimeout(10, TimeUnit.SECONDS)
+      .keepAliveWithoutCalls(false)
+      .idleTimeout(5, TimeUnit.MINUTES)
+      .enableRetry()
+      .maxRetryAttempts(5)
+      .intercept(interceptors: _*)
     if (isHttps) {
       channelBuilder = channelBuilder.useTransportSecurity()
     }
     channelBuilder.build()
   }
   private lazy val stub: MilvusServiceGrpc.MilvusServiceBlockingStub = {
-    val server = MilvusServiceGrpc.blockingStub(channel).withWaitForReady()
+    val server = MilvusServiceGrpc
+      .blockingStub(channel)
+      .withWaitForReady()
+      .withDeadlineAfter(10, TimeUnit.SECONDS)
     server.connect(
       ConnectRequest(
         clientInfo = Some(
@@ -77,6 +134,21 @@ class MilvusClient(params: MilvusConnectionParams) {
       )
     )
     server
+  }
+
+  def getConnectionMetadataInterceptor(): ClientInterceptor = {
+    val metaData = new Metadata()
+    metaData.put(
+      Metadata.Key.of("authorization", Metadata.ASCII_STRING_MARSHALLER),
+      Base64.getEncoder.encodeToString(
+        params.token.getBytes(StandardCharsets.UTF_8)
+      )
+    )
+    metaData.put(
+      Metadata.Key.of("dbname", Metadata.ASCII_STRING_MARSHALLER),
+      params.databaseName
+    )
+    return MetadataUtils.newAttachHeadersInterceptor(metaData)
   }
 
   def checkStatus(api: String, status: Status): Try[Status] = {
@@ -419,9 +491,18 @@ object MilvusClient {
   def apply(params: MilvusConnectionParams): MilvusClient = {
     new MilvusClient(params)
   }
+
   def apply(options: MilvusOption): MilvusClient = {
     new MilvusClient(
-      MilvusConnectionParams(options.uri, options.token, options.databaseName)
+      MilvusConnectionParams(
+        options.uri,
+        options.token,
+        options.databaseName,
+        options.serverPemPath,
+        options.clientPemPath,
+        options.clientKeyPath,
+        options.caPemPath
+      )
     )
   }
 }
@@ -429,7 +510,13 @@ object MilvusClient {
 case class MilvusConnectionParams(
     uri: String,
     token: String = "",
-    databaseName: String = ""
+    databaseName: String = "",
+    // one tls way
+    serverPemPath: String = "",
+    // two tls way
+    clientPemPath: String = "",
+    clientKeyPath: String = "",
+    caPemPath: String = ""
 )
 
 case class MilvusCollectionInfo(
@@ -459,5 +546,89 @@ object PKProcessor {
 
   implicit object StringProcessor extends PKProcessor[String] {
     def process(seq: Seq[String]): String = seq.map(s => s"'$s'").mkString(", ")
+  }
+}
+
+class GrpcRetryInterceptor(
+    maxRetries: Int = 5,
+    initialDelayMillis: Long = 500,
+    delayMultiplier: Double = 2.0,
+    maxDelayMillis: Long = 5000
+) extends ClientInterceptor {
+
+  private val nonRetryableCodes: Set[Code] = Set(
+    Code.DEADLINE_EXCEEDED,
+    Code.PERMISSION_DENIED,
+    Code.UNAUTHENTICATED,
+    Code.INVALID_ARGUMENT,
+    Code.ALREADY_EXISTS,
+    Code.RESOURCE_EXHAUSTED,
+    Code.UNIMPLEMENTED
+  )
+
+  override def interceptCall[ReqT, RespT](
+      method: MethodDescriptor[ReqT, RespT],
+      callOptions: CallOptions,
+      next: Channel
+  ): ClientCall[ReqT, RespT] = {
+    new ForwardingClientCall.SimpleForwardingClientCall[ReqT, RespT](
+      next.newCall(method, callOptions)
+    ) {
+      override def start(
+          responseListener: ClientCall.Listener[RespT],
+          headers: Metadata
+      ): Unit = {
+        var currentAttempt = 0
+        var currentDelay = initialDelayMillis
+
+        def executeCall(): Unit = {
+          currentAttempt += 1
+          println(
+            s"Attempting gRPC call for method ${method.getFullMethodName()}, attempt $currentAttempt"
+          )
+
+          val originalListener =
+            new ForwardingClientCallListener.SimpleForwardingClientCallListener[
+              RespT
+            ](responseListener) {
+              override def onClose(
+                  status: GrpcStatus,
+                  trailers: Metadata
+              ): Unit = {
+                if (status.isOk) {
+                  // Call succeeded
+                  super.onClose(status, trailers)
+                } else {
+                  val statusCode = status.getCode
+                  if (nonRetryableCodes.contains(statusCode)) {
+                    println(
+                      s"gRPC call failed with non-retryable status: $statusCode. Not retrying."
+                    )
+                    super.onClose(status, trailers)
+                  } else if (currentAttempt < maxRetries) {
+                    println(
+                      s"gRPC call failed with retryable status: $statusCode. Retrying in $currentDelay ms."
+                    )
+                    Thread.sleep(currentDelay)
+                    currentDelay = Math.min(
+                      (currentDelay * delayMultiplier).toLong,
+                      maxDelayMillis
+                    )
+                    executeCall()
+                  } else {
+                    println(
+                      s"gRPC call failed after $maxRetries attempts with status: $statusCode. No more retries."
+                    )
+                    super.onClose(status, trailers)
+                  }
+                }
+              }
+            }
+          super.start(originalListener, headers)
+        }
+
+        executeCall() // Start the first attempt
+      }
+    }
   }
 }
