@@ -386,7 +386,6 @@ class MilvusPartitionReader(
             s"Unsupported data type for setting value at ordinal $ordinal: $dataType"
           )
         }
-      // TODO: add support for other vector types
       case _ =>
         logWarning(
           s"Unsupported data type for setting value at ordinal $ordinal: $dataType"

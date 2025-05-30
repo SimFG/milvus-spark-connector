@@ -38,6 +38,7 @@ lazy val root = (project in file("."))
       sparkCore,
       sparkSql,
       sparkCatalyst,
+      sparkMLlib,
       parquetCommon,
       parquetColumn,
       parquetHadoop,

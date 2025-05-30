@@ -53,8 +53,6 @@ class MilvusClient(params: MilvusConnectionParams) {
       }
     }
     // TODO fubang: add tls support
-    // TODO fubang: timeout support
-    // TODO fubang: resource close support
     var channelBuilder = ManagedChannelBuilder
       .forAddress(host, port)
       .usePlaintext()

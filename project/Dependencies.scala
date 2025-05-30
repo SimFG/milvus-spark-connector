@@ -25,6 +25,8 @@ object Dependencies {
     "org.apache.spark" %% "spark-sql" % sparkVersion % "provided,test"
   lazy val sparkCatalyst =
     "org.apache.spark" %% "spark-catalyst" % sparkVersion % "provided,test"
+  lazy val sparkMLlib =
+    "org.apache.spark" %% "spark-mllib" % sparkVersion % "provided,test"
   lazy val parquetCommon =
     "org.apache.parquet" % "parquet-common" % parquetVersion
   lazy val parquetColumn =

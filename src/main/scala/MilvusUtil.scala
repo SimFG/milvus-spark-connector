@@ -532,15 +532,11 @@ object IntConverter {
 
 object SparseFloatVectorConverter {
   def encodeSparseFloatVector(sparse: Map[Long, Float]): Array[Byte] = {
-    // TODO check it
-    // 对 Map 的键进行排序（按升序排列）
     val sortedEntries = sparse.toSeq.sortBy(_._1)
 
-    // 分配 ByteBuffer，大小为 (Int + Float) * 元素数量
     val buf = ByteBuffer.allocate((4 + 4) * sortedEntries.size)
-    buf.order(ByteOrder.LITTLE_ENDIAN) // 设置为小端模式
+    buf.order(ByteOrder.LITTLE_ENDIAN)
 
-    // 遍历排序后的键值对
     for ((k, v) <- sortedEntries) {
       if (k < 0 || k >= Math.pow(2.0, 32) - 1) {
         throw new DataParseException(
@@ -548,10 +544,10 @@ object SparseFloatVectorConverter {
         )
       }
 
-      val lBuf = ByteBuffer.allocate(8) // Long 占 8 字节
+      val lBuf = ByteBuffer.allocate(8)
       lBuf.order(ByteOrder.LITTLE_ENDIAN)
       lBuf.putLong(k)
-      buf.put(lBuf.array(), 0, 4) // 只取前 4 字节
+      buf.put(lBuf.array(), 0, 4)
 
       if (v.isNaN || v.isInfinite) {
         throw new DataParseException(
