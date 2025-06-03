@@ -42,9 +42,9 @@ class MilvusBinlogDataSource
 
   override def inferSchema(options: CaseInsensitiveStringMap): StructType = {
     // Schema is fixed: a single column "values" of Array[String]
-    logInfo(
-      s"inferSchema options, keys: ${options.keySet()}, values: ${options.values()}"
-    )
+    // logInfo(
+    //   s"inferSchema options, keys: ${options.keySet()}, values: ${options.values()}"
+    // )
     val readerType = options.get(Constants.LogReaderTypeParamName)
     if (readerType == null) {
       throw new IllegalArgumentException(
@@ -295,6 +295,7 @@ case class MilvusBinlogReaderOption(
     s3AccessKey: String,
     s3SecretKey: String,
     s3UseSSL: Boolean,
+    s3PathStyleAccess: Boolean,
     beginTimestamp: Long, // inclusive
     endTimestamp: Long // exclusive
 ) extends Serializable
@@ -308,7 +309,7 @@ case class MilvusBinlogReaderOption(
         "fs.s3a.endpoint",
         s3Endpoint
       )
-      conf.set("fs.s3a.path.style.access", "true")
+      conf.set("fs.s3a.path.style.access", s3PathStyleAccess.toString)
       conf.set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
       conf.set(
         "fs.s3a.access.key",
@@ -368,6 +369,7 @@ object MilvusBinlogReaderOption {
       options.getOrDefault(Constants.S3AccessKey, "minioadmin"),
       options.getOrDefault(Constants.S3SecretKey, "minioadmin"),
       options.getOrDefault(Constants.S3UseSSL, "false").toBoolean,
+      options.getOrDefault(Constants.S3PathStyleAccess, "true").toBoolean,
       options.getOrDefault(Constants.LogReaderBeginTimestamp, "0").toLong,
       options.getOrDefault(Constants.LogReaderEndTimestamp, "0").toLong
     )

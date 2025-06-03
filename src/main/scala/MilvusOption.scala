@@ -59,6 +59,7 @@ object MilvusOption {
   val S3AccessKey = Constants.S3AccessKey
   val S3SecretKey = Constants.S3SecretKey
   val S3UseSSL = Constants.S3UseSSL
+  val S3PathStyleAccess = Constants.S3PathStyleAccess
 
   // Create MilvusOption from a map
   def apply(options: CaseInsensitiveStringMap): MilvusOption = {

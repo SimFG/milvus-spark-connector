@@ -49,6 +49,7 @@ object Constants {
   val S3AccessKey = "s3.user"
   val S3SecretKey = "s3.password"
   val S3UseSSL = "s3.useSSL"
+  val S3PathStyleAccess = "s3.pathStyleAccess"
 
   val TimestampFieldID = "1"
 
