@@ -40,6 +40,7 @@ object Constants {
   val LogReaderTypeDelete = "delete"
   val LogReaderBeginTimestamp = "reader.ts.begin"
   val LogReaderEndTimestamp = "reader.ts.end"
+  val LogReaderFieldIDs = "reader.field.ids"
 
   // s3 config
   val S3FileSystemTypeName = "s3.fs" // default: s3a://

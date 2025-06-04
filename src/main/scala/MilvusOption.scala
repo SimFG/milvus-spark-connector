@@ -23,7 +23,8 @@ case class MilvusOption(
     collectionID: String = "",
     partitionID: String = "",
     segmentID: String = "",
-    fieldID: String = ""
+    fieldID: String = "",
+    fieldIDs: String = ""
 )
 
 object MilvusOption {
@@ -50,6 +51,7 @@ object MilvusOption {
   val ReaderType = Constants.LogReaderTypeParamName
   val ReaderBeginTimestamp = Constants.LogReaderBeginTimestamp
   val ReaderEndTimestamp = Constants.LogReaderEndTimestamp
+  val ReaderFieldIDs = Constants.LogReaderFieldIDs
 
   // s3 config
   val S3FileSystemTypeName = Constants.S3FileSystemTypeName
@@ -82,6 +84,7 @@ object MilvusOption {
     val retryCount = options.getOrDefault(MilvusRetryCount, "3").toInt
     val retryInterval =
       options.getOrDefault(MilvusRetryInterval, "1000").toInt
+    val fieldIDs = options.getOrDefault(ReaderFieldIDs, "")
 
     MilvusOption(
       uri,
@@ -99,7 +102,8 @@ object MilvusOption {
       collectionID,
       partitionID,
       segmentID,
-      fieldID
+      fieldID,
+      fieldIDs
     )
   }
 }

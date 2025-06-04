@@ -116,6 +116,12 @@ case class MilvusTable(
     with Logging {
   var milvusCollection: MilvusCollectionInfo = _
   initInfo()
+  var fieldIDs =
+    if (milvusOption.fieldIDs.nonEmpty) {
+      milvusOption.fieldIDs.split(",").toSeq
+    } else {
+      Seq[String]()
+    }
 
   def initInfo(): Unit = {
     val client = MilvusClient(milvusOption)
@@ -151,6 +157,7 @@ case class MilvusTable(
         milvusCollection.collectionID.toString
       )
     }
+
     val allOptions = new CaseInsensitiveStringMap(mergedOptions)
     new MilvusScanBuilder(schema(), allOptions)
   }
@@ -159,16 +166,32 @@ case class MilvusTable(
 
   override def schema(): StructType = {
     var fields = Seq[StructField]()
+    var fieldName2ID = mutable.Map[String, Long]()
+    milvusCollection.schema.fields.zipWithIndex.foreach { case (field, index) =>
+      fieldName2ID(field.name) = if (field.fieldID == 0) {
+        index + 100
+      } else {
+        field.fieldID
+      }
+    }
     fields = fields :+ StructField("rowID", LongType, false)
     fields = fields :+ StructField("timestamp", LongType, false)
-    fields = fields ++ milvusCollection.schema.fields.map(field =>
-      StructField(
-        field.name,
-        DataTypeUtil.toDataType(field),
-        field.nullable
+    fields = fields ++ milvusCollection.schema.fields
+      .filter(field =>
+        fieldIDs.isEmpty || fieldIDs.contains(fieldName2ID(field.name).toString)
       )
-    )
-    if (milvusCollection.schema.enableDynamicField) {
+      .map(field =>
+        StructField(
+          field.name,
+          DataTypeUtil.toDataType(field),
+          field.nullable
+        )
+      )
+    val maxFieldID = fieldName2ID.values.max
+    if (
+      milvusCollection.schema.enableDynamicField &&
+      (fieldIDs.isEmpty || fieldIDs.contains((maxFieldID + 1).toString))
+    ) {
       fields = fields :+ StructField("$meta", StringType, true)
     }
     StructType(fields)
@@ -210,6 +233,13 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
       "Option 'path' is required for mybinlog files."
     )
   }
+  private val fieldIDs =
+    if (options.get(MilvusOption.ReaderFieldIDs) != null) {
+      val optionIDs = options.get(MilvusOption.ReaderFieldIDs).split(",").toSeq
+      optionIDs ++ Seq[String]("0", "1")
+    } else {
+      Seq[String]()
+    }
 
   def getPathOption(): String = {
     if (options.get(MilvusOption.ReaderPath) != null) {
@@ -286,7 +316,7 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
       )
     }
 
-    val filePathMap = mutable.Map[String, Seq[String]]()
+    var filePathMap = mutable.Map[String, Seq[String]]()
     fileStatuses.foreach(status => {
       val filePath = status.getPath.toString
       val paths = filePath.split("/")
@@ -298,7 +328,10 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
         filePathMap(filedID) = Seq(fileName)
       }
     })
-    // logInfo(s"filePathMap: $filePathMap")
+
+    if (fieldIDs.nonEmpty) {
+      filePathMap = filePathMap.filter(entry => fieldIDs.contains(entry._1))
+    }
 
     // Sort the file names in ascending order for each field ID
     filePathMap.foreach { case (fieldId, fileNames) =>
