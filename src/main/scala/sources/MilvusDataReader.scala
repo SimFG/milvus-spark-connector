@@ -102,7 +102,7 @@ class MilvusPartitionReader(
     }
 
     private def hasNextInsertEvent(): Boolean = {
-      if (insertEvent != null && currentIndex == insertEvent.datas.length - 1) {
+      if (insertEvent != null && currentIndex >= insertEvent.datas.length) {
         insertEvent = null
         currentIndex = 0
       }
