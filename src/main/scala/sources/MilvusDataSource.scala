@@ -42,7 +42,12 @@ import org.apache.spark.sql.connector.write.{
   WriterCommitMessage
 }
 import org.apache.spark.sql.sources.DataSourceRegister
-import org.apache.spark.sql.types.{LongType, StructField, StructType}
+import org.apache.spark.sql.types.{
+  LongType,
+  StringType,
+  StructField,
+  StructType
+}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 import com.zilliz.spark.connector.{DataTypeUtil, MilvusClient, MilvusOption}
@@ -163,6 +168,9 @@ case class MilvusTable(
         field.nullable
       )
     )
+    if (milvusCollection.schema.enableDynamicField) {
+      fields = fields :+ StructField("$meta", StringType, true)
+    }
     StructType(fields)
   }
 
