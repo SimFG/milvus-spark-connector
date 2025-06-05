@@ -374,7 +374,7 @@ class MilvusPartitionReader(
               val array = value.split(",").map(_.toDouble)
               row.update(ordinal, ArrayData.toArrayData(array))
             case SparkDataTypes.StringType =>
-              val array = value.split(",")
+              val array = value.split(",").map(UTF8String.fromString)
               row.update(ordinal, ArrayData.toArrayData(array))
             case _ =>
               throw new UnsupportedOperationException(

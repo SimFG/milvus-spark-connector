@@ -1,6 +1,7 @@
 package com.zilliz.spark.connector.sources
 
 import java.{util => ju}
+import java.io.FileNotFoundException
 import java.util.{Collections, HashMap, Map => JMap}
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
@@ -271,16 +272,22 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
       fs: FileSystem,
       dirPath: Path
   ): Seq[FileStatus] = {
-    if (!fs.getFileStatus(dirPath).isDirectory) {
-      throw new IllegalArgumentException(
-        s"Path $dirPath is not a directory."
-      )
+    try {
+      if (!fs.getFileStatus(dirPath).isDirectory) {
+        throw new IllegalArgumentException(
+          s"Path $dirPath is not a directory."
+        )
+      }
+      fs.listStatus(dirPath)
+        .filter(_.isDirectory())
+        .filterNot(_.getPath.getName.startsWith("_"))
+        .filterNot(_.getPath.getName.startsWith("."))
+        .toSeq
+    } catch {
+      case e: FileNotFoundException =>
+        logWarning(s"Path $dirPath not found")
+        Seq[FileStatus]()
     }
-    fs.listStatus(dirPath)
-      .filter(_.isDirectory())
-      .filterNot(_.getPath.getName.startsWith("_"))
-      .filterNot(_.getPath.getName.startsWith("."))
-      .toSeq
   }
 
   def getSegmentFieldMap(
