@@ -52,6 +52,25 @@ alias spark-submit-wrapper="/xxx/spark-submit-wrapper.sh"
 
 ## Running the Connector
 
+### Add Milvus Spark Connector Dependency
+
+You can use the pre-built Milvus Spark Connector package directly, or compile it yourself by following the instructions in the next section.
+
+**Note:** The official release package is currently used primarily for testing the release process. Active development and updates are concentrated in the SNAPSHOT versions.
+
+- **Official Release:** Available at [Maven Repository](https://mvnrepository.com/artifact/com.zilliz/spark-connector_2.13)
+- **Latest SNAPSHOT:** Version 0.1.2-SNAPSHOT
+
+#### Using SNAPSHOT Dependencies
+
+To use the SNAPSHOT version, you need to add the snapshot repository to your build configuration:
+
+**For SBT (build.sbt):**
+
+```
+ThisBuild / resolvers += "Sonatype Snapshots" at "https://central.sonatype.com/repository/maven-snapshots/"
+```
+
 ### Build and Package Milvus Spark Connector
 
 Use the following SBT commands to compile, package, and publish the connector locally:
@@ -84,6 +103,8 @@ sbt clean compile package
 ### Run the Test Demo
 
 To execute the test demo, specify the paths to the JAR files generated in the previous steps. Replace `/xxx/` with the actual paths on your machine.
+
+**Note:** If you prefer to use online dependencies instead of building locally, you can download the pre-built assembly JAR from the [GitHub Releases page](https://github.com/zilliztech/milvus-spark-connector/releases).
 
 ```bash
 spark-submit-wrapper --jars /xxx/spark-connector-assembly-0.1.0-SNAPSHOT.jar --class "example.FloatInsertDemo" /xxx/milvus-spark-connector-example_2.13-0.1.0-SNAPSHOT.jar
