@@ -30,6 +30,7 @@ import io.milvus.grpc.milvus.{
   MilvusServiceGrpc,
   MutationResult
 }
+import io.milvus.grpc.milvus.DescribeCollectionResponse
 import io.milvus.grpc.schema.{
   CollectionSchema,
   DataType,
@@ -364,14 +365,21 @@ class MilvusClient(params: MilvusConnectionParams) {
     }
   }
 
+  private def describeCollectionRPC(
+      dbName: String,
+      collectionName: String
+  ): DescribeCollectionResponse = {
+    return stub.describeCollection(
+      DescribeCollectionRequest(
+        dbName = dbName,
+        collectionName = collectionName
+      )
+    )
+  }
+
   def getPKName(dbName: String, collectionName: String): Try[String] = {
     try {
-      val collectionInfo = stub.describeCollection(
-        DescribeCollectionRequest(
-          dbName = dbName,
-          collectionName = collectionName
-        )
-      )
+      val collectionInfo = describeCollectionRPC(dbName, collectionName)
       Success(
         collectionInfo.schema
           .getOrElse(
@@ -399,12 +407,7 @@ class MilvusClient(params: MilvusConnectionParams) {
       collectionName: String
   ): Try[CollectionSchema] = {
     try {
-      val collectionInfo = stub.describeCollection(
-        DescribeCollectionRequest(
-          dbName = dbName,
-          collectionName = collectionName
-        )
-      )
+      val collectionInfo = describeCollectionRPC(dbName, collectionName)
       Success(
         collectionInfo.schema.getOrElse(
           throw new Exception(
@@ -425,12 +428,7 @@ class MilvusClient(params: MilvusConnectionParams) {
       collectionName: String
   ): Try[MilvusCollectionInfo] = {
     try {
-      val collectionInfo = stub.describeCollection(
-        DescribeCollectionRequest(
-          dbName = dbName,
-          collectionName = collectionName
-        )
-      )
+      val collectionInfo = describeCollectionRPC(dbName, collectionName)
       Success(
         MilvusCollectionInfo(
           dbName = dbName,
