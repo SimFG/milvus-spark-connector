@@ -1,11 +1,42 @@
+import xerial.sbt.Sonatype._
 import Dependencies._
 
-ThisBuild / scalaVersion := "2.13.16"
-ThisBuild / version := "0.1.0-SNAPSHOT"
-ThisBuild / name := "spark-connector"
-ThisBuild / organization := "com.zilliz"
 ThisBuild / organizationName := "zilliz"
 ThisBuild / organizationHomepage := Some(url("https://zilliz.com/"))
+// For cross-compiling (if applicable)
+// crossScalaVersions := Seq("2.12.x", "2.13.x")
+ThisBuild / scalaVersion := "2.13.16"
+ThisBuild / description := "Milvus Spark Connector to use in Spark ETLs to populate a Milvus vector database."
+ThisBuild / versionScheme := Some("early-semver")
+
+// Remove all additional repository other than Maven Central from POM
+ThisBuild / pomIncludeRepository := { _ => false }
+ThisBuild / publishMavenStyle := true
+
+ThisBuild / publishTo := {
+  val centralSnapshots =
+    "https://central.sonatype.com/repository/maven-snapshots/"
+  if (isSnapshot.value) Some("central-snapshots" at centralSnapshots)
+  else localStaging.value
+}
+
+ThisBuild / licenses := List(
+  "Server Side Public License v1" -> new URL(
+    "https://raw.githubusercontent.com/mongodb/mongo/refs/heads/master/LICENSE-Community.txt"
+  ),
+  "GNU Affero General Public License v3 (AGPLv3)" -> new URL(
+    "https://www.gnu.org/licenses/agpl-3.0.txt"
+  )
+)
+ThisBuild / homepage := Some(
+  url("https://github.com/zilliztech/milvus-spark-connector")
+)
+ThisBuild / scmInfo := Some(
+  ScmInfo(
+    url("https://github.com/zilliztech/milvus-spark-connector"),
+    "scm:git@github.com:zilliztech/milvus-spark-connector.git"
+  )
+)
 ThisBuild / developers := List(
   Developer(
     id = "simfg",
@@ -14,21 +45,12 @@ ThisBuild / developers := List(
     url = url("https://github.com/SimFG")
   )
 )
-ThisBuild / description := "Milvus Spark Connector to use in Spark ETLs to populate a Milvus vector database."
-ThisBuild / licenses := List(
-  "Apache 2.0 License" -> new URL(
-    "https://github.com/zilliztech/milvus-spark-connector/blob/main/LICENSE"
-  )
-)
-ThisBuild / homepage := Some(
-  url("https://github.com/zilliztech/milvus-spark-connector")
-)
-ThisBuild / publishTo := Some(Resolver.mavenLocal)
-ThisBuild / publishMavenStyle := true
 
 lazy val root = (project in file("."))
   .settings(
     name := "spark-connector",
+    version := "0.1.2-SNAPSHOT",
+    organization := "com.zilliz",
     libraryDependencies ++= Seq(
       munit % Test,
       grpcNetty,
@@ -69,121 +91,30 @@ assemblyShadeRules in assembly := Seq(
 )
 
 assembly / assemblyMergeStrategy := {
-  case PathList(
-        "META-INF",
-        "native-image",
-        "io.netty",
-        "transport",
-        "reflection-config.json"
-      ) =>
+  // Handle all Netty native-image files
+  case PathList("META-INF", "native-image", "io.netty", _*) =>
     MergeStrategy.discard
-  case PathList(
-        "META-INF",
-        "native-image",
-        "io.netty",
-        "codec-http",
-        "native-image.properties"
-      ) =>
-    MergeStrategy.discard
-  case PathList(
-        "META-INF",
-        "native-image",
-        "io.netty",
-        "handler",
-        "native-image.properties"
-      ) =>
-    MergeStrategy.discard
-  case PathList(
-        "META-INF",
-        "native-image",
-        "io.netty",
-        "common",
-        "native-image.properties"
-      ) =>
-    MergeStrategy.discard
-  case PathList(
-        "META-INF",
-        "native-image",
-        "io.netty",
-        "buffer",
-        "native-image.properties"
-      ) =>
-    MergeStrategy.discard
-  case PathList(
-        "META-INF",
-        "native-image",
-        "io.netty",
-        "transport",
-        "native-image.properties"
-      ) =>
-    MergeStrategy.discard
-  case PathList(
-        "META-INF",
-        "native-image",
-        "io.netty",
-        "netty-codec",
-        "generated",
-        "handlers",
-        "reflect-config.json"
-      ) =>
-    MergeStrategy.discard
-  case PathList(
-        "META-INF",
-        "native-image",
-        "io.netty",
-        "netty-handler",
-        "generated",
-        "handlers",
-        "reflect-config.json"
-      ) =>
-    MergeStrategy.discard
+  // Handle Netty version properties
   case PathList("META-INF", "io.netty.versions.properties") =>
-    MergeStrategy.discard // 丢弃 netty 的版本信息文件
+    MergeStrategy.discard
+  // Handle mime.types
   case PathList("mime.types") =>
-    MergeStrategy.filterDistinctLines // 合并 mime.types，保留不重复的行
-  case PathList(
-        "META-INF",
-        "native-image",
-        "io.netty",
-        "netty-common",
-        "native-image.properties"
-      ) =>
-    MergeStrategy.discard // 丢弃 native-image 属性文件
+    MergeStrategy.filterDistinctLines
+  // Handle FastDoubleParser notice
   case PathList("META-INF", "FastDoubleParser-NOTICE") =>
     MergeStrategy.discard
-  case PathList(
-        "META-INF",
-        "native-image",
-        "io.netty",
-        "netty-codec",
-        "generated",
-        "handlers",
-        "reflect-config.json"
-      ) =>
+  // Handle module-info.class files
+  case x if x.endsWith("module-info.class") =>
     MergeStrategy.discard
-  case PathList(
-        "META-INF",
-        "native-image",
-        "io.netty",
-        "netty-handler",
-        "generated",
-        "handlers",
-        "reflect-config.json"
-      ) =>
-    MergeStrategy.discard
-  case PathList(
-        "META-INF",
-        "native-image",
-        "io.netty",
-        "netty-common",
-        "native-image.properties"
-      ) =>
-    MergeStrategy.discard
-  case PathList("module-info.class")         => MergeStrategy.discard
-  case x if x.endsWith("/module-info.class") => MergeStrategy.discard
+  // Default case
   case x =>
     val oldStrategy = (ThisBuild / assemblyMergeStrategy).value
     oldStrategy(x)
 }
+
+// import scalapb.compiler.Version
+// val grpcJavaVersion =
+//   SettingKey[String]("grpcJavaVersion", "ScalaPB gRPC Java version")
+// grpcJavaVersion := Version.grpcJavaVersion
 
 // See https://www.scala-sbt.org/1.x/docs/Using-Sonatype.html for instructions on how to publish to Sonatype.

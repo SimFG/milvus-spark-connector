@@ -8,14 +8,14 @@ To ensure smooth operation, it is critical to use consistent versions of the req
 2. **Java Version:** 17.0
 3. **Scala Version:** 2.13.8
 4. **Spark Version:** 3.5.3 (built with Scala 2.13)
-5. **SBT Version:** 1.10.11
+5. **SBT Version:** 1.11.1
 
 If you are using SDKMAN, you can quickly install Java, Scala, and SBT as follows:
 
 ```bash
 sdk install java 17.0.14.crac-zulu
 sdk install scala 2.13.8
-sdk install sbt 1.10.11
+sdk install sbt 1.11.1
 ```
 
 The Spark version provided by SDKMAN only supports Scala 2.12. Therefore, you need to manually install the Spark version compatible with Scala 2.13. You can download it from the following link: [Spark Download](https://www.apache.org/dyn/closer.lua/spark/spark-3.5.3/spark-3.5.3-bin-hadoop3-scala2.13.tgz).

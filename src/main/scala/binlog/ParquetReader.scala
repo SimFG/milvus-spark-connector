@@ -68,24 +68,6 @@ class ParquetPayloadReader(data: Array[Byte])
       val parquetReader = ParquetFileReader.open(inputFile)
       reader = Some(parquetReader)
       schema = Some(parquetReader.getFooter.getFileMetaData.getSchema)
-
-      // logDebug(s"Parquet schema: ${schema.getOrElse("N/A")}")
-
-      // Print field names for debugging
-      // schema.foreach { msgType =>
-      //   val fields = msgType.getFields
-      //   if (fields.isEmpty) {
-      // logWarning("Parquet schema has no fields")
-      // } else {
-
-      // logDebug("Schema field names:")
-      // fields.forEach { field =>
-      // logDebug(
-      //   s"  Field ${msgType.getFieldIndex(field.getName)}: ${field.getName} (${field.asPrimitiveType().getPrimitiveTypeName})"
-      // )
-      // }
-      // }
-      // }
     }.recover {
       case e: IOException =>
         // logError(s"Error initializing Parquet reader: ${e.getMessage}", e)

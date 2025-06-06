@@ -165,7 +165,7 @@ class MilvusPartitionReader(
     }
 
     override def close(): Unit = {
-      logInfo(s"Closing field file: $filePath")
+      // logInfo(s"Closing field file: $filePath")
       if (inputStream != null) {
         try {
           inputStream.close()
@@ -188,9 +188,9 @@ class MilvusPartitionReader(
   // Open all field files when the reader is initialized
   // Note: Spark calls open() when the reader is ready to start reading
   def open(): Unit = {
-    logInfo(
-      s"MilvusDataReader opening files for partition: ${fieldFiles.values.mkString(", ")}"
-    )
+    // logInfo(
+    //   s"MilvusDataReader opening files for partition: ${fieldFiles.values.mkString(", ")}"
+    // )
     fieldFileReaders = fieldFiles.map { case (fieldName, filePath) =>
       // Create a FieldFileReader for each field's file
       val reader = new MilvusBinlogFieldFileReader(filePath, options)

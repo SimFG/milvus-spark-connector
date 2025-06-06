@@ -25,8 +25,6 @@ import io.milvus.grpc.schema.{
 }
 
 object MilvusFieldData {
-  // TODO: fubang null value support
-  // TODO: fubang support dynamic field
   def packBoolFieldData(
       fieldName: String,
       fieldValues: Seq[Boolean]
