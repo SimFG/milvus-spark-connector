@@ -104,7 +104,7 @@ sbt clean compile package
 
 To execute the test demo, specify the paths to the JAR files generated in the previous steps. Replace `/xxx/` with the actual paths on your machine.
 
-**Note:** If you prefer to use online dependencies instead of building locally, you can download the pre-built assembly JAR from the [GitHub Releases page](https://github.com/zilliztech/milvus-spark-connector/releases).
+**Note:** If you prefer to use online dependencies instead of building locally, you can download the pre-built assembly JAR from the [GitHub Releases page](https://github.com/SimFG/milvus-spark-connector/releases).
 
 ```bash
 spark-submit-wrapper --jars /xxx/spark-connector-assembly-0.1.0-SNAPSHOT.jar --class "example.FloatInsertDemo" /xxx/milvus-spark-connector-example_2.13-0.1.0-SNAPSHOT.jar
