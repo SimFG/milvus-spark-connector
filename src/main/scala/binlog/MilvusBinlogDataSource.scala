@@ -312,6 +312,10 @@ case class MilvusBinlogReaderOption(
       conf.set("fs.s3a.path.style.access", s3PathStyleAccess.toString)
       conf.set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
       conf.set(
+        "fs.s3a.aws.credentials.provider",
+        "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider,com.amazonaws.auth.DefaultAWSCredentialsProviderChain"
+      )
+      conf.set(
         "fs.s3a.access.key",
         s3AccessKey
       )
