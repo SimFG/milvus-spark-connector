@@ -292,8 +292,20 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
 
   def getSegmentFieldMap(
       fs: FileSystem,
+      client: MilvusClient,
       rootPath: Path
   ): Seq[Map[String, String]] = {
+    val paths = rootPath.toString().split("/")
+    val segmentID = paths(paths.length - 1).toLong
+    val collectionID = paths(paths.length - 3).toLong
+    val result = client.getSegmentInfo(collectionID, segmentID)
+    if (result.isFailure) {
+      throw new IllegalArgumentException(
+        s"Failed to get segment info: ${result.failed.get.getMessage}"
+      )
+    }
+    val insertLogIDs = result.get.insertLogIDs
+
     val fileStatuses = if (fs.getFileStatus(rootPath).isDirectory) {
       val fieldDirStatuses = fs
         .listStatus(rootPath)
@@ -329,10 +341,12 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
       val paths = filePath.split("/")
       val fileName = paths(paths.length - 1)
       val filedID = paths(paths.length - 2)
-      if (filePathMap.contains(filedID)) {
-        filePathMap(filedID) = filePathMap(filedID) :+ fileName
-      } else {
-        filePathMap(filedID) = Seq(fileName)
+      if (insertLogIDs.contains(s"${filedID}/${fileName}")) {
+        if (filePathMap.contains(filedID)) {
+          filePathMap(filedID) = filePathMap(filedID) :+ fileName
+        } else {
+          filePathMap(filedID) = Seq(fileName)
+        }
       }
     })
 
@@ -355,23 +369,18 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
     return fieldMaps
   }
 
-  def getValidSegments(): Seq[String] = {
-    val client = MilvusClient(milvusOption)
-    try {
-      val result = client.getSegments(
-        milvusOption.databaseName,
-        milvusOption.collectionName
-      )
-      result
-        .getOrElse(
-          throw new Exception(
-            s"Failed to get segment info: ${result.failed.get.getMessage}"
-          )
+  def getValidSegments(client: MilvusClient): Seq[String] = {
+    val result = client.getSegments(
+      milvusOption.databaseName,
+      milvusOption.collectionName
+    )
+    result
+      .getOrElse(
+        throw new Exception(
+          s"Failed to get segment info: ${result.failed.get.getMessage}"
         )
-        .map(_.segmentID.toString)
-    } finally {
-      client.close()
-    }
+      )
+      .map(_.segmentID.toString)
   }
 
   override def toBatch: Batch = this
@@ -386,21 +395,23 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
     val partition = milvusOption.partitionID
     val segment = milvusOption.segmentID
 
+    val milvusClient = MilvusClient(milvusOption)
+
     var validSegments = Seq[String]()
     if (segment.isEmpty()) {
-      validSegments = getValidSegments()
+      validSegments = getValidSegments(milvusClient)
     }
 
     var fieldMaps = Seq[Map[String, String]]()
     if (rawPath.isEmpty) {
       if (!partition.isEmpty() && !segment.isEmpty()) {
-        fieldMaps ++= getSegmentFieldMap(fs, rootPath)
+        fieldMaps ++= getSegmentFieldMap(fs, milvusClient, rootPath)
       } else if (!partition.isEmpty()) {
         var segmentStatuses = getCollectionOrPartitionStatuses(fs, rootPath)
         segmentStatuses
           .filter(status => validSegments.contains(status.getPath().getName))
           .foreach(status => {
-            fieldMaps ++= getSegmentFieldMap(fs, status.getPath())
+            fieldMaps ++= getSegmentFieldMap(fs, milvusClient, status.getPath())
           })
       } else {
         var partitionStatuses = getCollectionOrPartitionStatuses(fs, rootPath)
@@ -410,18 +421,23 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
           segmentStatuses
             .filter(status => validSegments.contains(status.getPath().getName))
             .foreach(status => {
-              fieldMaps ++= getSegmentFieldMap(fs, status.getPath())
+              fieldMaps ++= getSegmentFieldMap(
+                fs,
+                milvusClient,
+                status.getPath()
+              )
             })
         })
       }
     } else {
-      fieldMaps ++= getSegmentFieldMap(fs, rootPath)
+      fieldMaps ++= getSegmentFieldMap(fs, milvusClient, rootPath)
     }
 
     val result = fieldMaps
       .map(fieldMap => MilvusInputPartition(fieldMap): InputPartition)
       .toArray
     fs.close()
+    milvusClient.close()
     result
   }
 

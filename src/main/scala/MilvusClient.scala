@@ -1,14 +1,22 @@
 package com.zilliz.spark.connector
 
 import java.io.File
+import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.net.URI
 import java.nio.charset.StandardCharsets
+import java.time.Duration
 import java.util.concurrent.TimeUnit
 import java.util.Base64
 import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.jdk.CollectionConverters._
 import scala.util.{Failure, Success, Try}
 
+import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.scala.{
+  DefaultScalaModule,
+  ScalaObjectMapper
+}
 import com.google.protobuf.ByteString
 
 import io.milvus.grpc.common.{
@@ -135,6 +143,14 @@ class MilvusClient(params: MilvusConnectionParams) {
       )
     )
     server
+  }
+
+  private lazy val httpClient: HttpClient = {
+    HttpClient
+      .newBuilder()
+      .version(HttpClient.Version.HTTP_2)
+      .connectTimeout(Duration.ofSeconds(10))
+      .build()
   }
 
   def getConnectionMetadataInterceptor(): ClientInterceptor = {
@@ -480,12 +496,98 @@ class MilvusClient(params: MilvusConnectionParams) {
     }
   }
 
+  def getSegmentInfo(
+      collectionID: Long,
+      segmentID: Long
+  ): Try[MilvusSegmentLogInfo] = {
+    try {
+      val req = GetSegmentsInfoReq(
+        dbName = params.databaseName,
+        collectionID = collectionID,
+        segmentIDs = Seq(segmentID)
+      )
+      val jsonString = GetSegmentsInfoReq.toJson(req)
+
+      val request = HttpRequest
+        .newBuilder()
+        .uri(URI.create(params.uri + MilvusClient.segmentsUrl))
+        .header("Content-Type", "application/json")
+        .header(
+          "Authorization",
+          "Basic " + Base64.getEncoder.encodeToString(
+            params.token.getBytes(StandardCharsets.UTF_8)
+          )
+        )
+        .POST(HttpRequest.BodyPublishers.ofString(jsonString))
+        .build();
+
+      val response =
+        httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+      if (response.statusCode() != 200) {
+        return Failure(
+          new Exception(s"Failed to get segment info: ${response.body()}")
+        )
+      }
+      val responseBody = response.body()
+      val responseJson = MilvusClient.mapper.readTree(responseBody)
+      if (responseJson.has("code") && responseJson.get("code").asInt() != 0) {
+        return Failure(
+          new Exception(
+            s"Failed to get segment info: ${responseJson.get("message").asText()}"
+          )
+        )
+      }
+      var insertLogIDs = Seq[String]()
+      responseJson
+        .get("data")
+        .get("segmentInfos")
+        .elements()
+        .asScala
+        .foreach(info => {
+          info
+            .get("insertLogs")
+            .elements()
+            .asScala
+            .foreach(insertLogs => {
+              val fieldID = insertLogs.get("fieldID").asLong()
+              insertLogs
+                .get("logIDs")
+                .elements()
+                .asScala
+                .foreach(logID => {
+                  insertLogIDs = insertLogIDs :+ s"${fieldID}/${logID.asLong()}"
+                })
+            })
+        })
+      return Success(
+        MilvusSegmentLogInfo(
+          segmentID = segmentID,
+          insertLogIDs = insertLogIDs
+        )
+      )
+    } catch {
+      case e: Exception =>
+        Failure(
+          new Exception(s"Failed to get segment info: ${e.getMessage}")
+        )
+    }
+  }
+
   def close(): Unit = {
     channel.shutdownNow()
   }
 }
 
 object MilvusClient {
+  val baseUrl = "/v2/vectordb"
+  val segmentsUrl = s"$baseUrl/segments/describe"
+
+  val mapper: ObjectMapper with ScalaObjectMapper = {
+    val m = new ObjectMapper() with ScalaObjectMapper
+    m.registerModule(DefaultScalaModule)
+    m
+  }
+
   def apply(params: MilvusConnectionParams): MilvusClient = {
     new MilvusClient(params)
   }
@@ -532,6 +634,31 @@ case class MilvusSegmentInfo(
     state: SegmentState,
     level: SegmentLevel
 )
+
+case class MilvusSegmentLogInfo(
+    segmentID: Long,
+    insertLogIDs: Seq[String] // "/field_id/log_id"
+)
+
+case class GetSegmentsInfoReq(
+    @JsonProperty("dbName") dbName: String,
+    @JsonProperty(
+      "collectionID"
+    ) collectionID: Long,
+    @JsonProperty("segmentIDs") segmentIDs: Seq[
+      Long
+    ]
+)
+
+object GetSegmentsInfoReq {
+  def toJson(req: GetSegmentsInfoReq): String = {
+    MilvusClient.mapper.writeValueAsString(req)
+  }
+
+  def fromJson(jsonString: String): GetSegmentsInfoReq = {
+    MilvusClient.mapper.readValue(jsonString, classOf[GetSegmentsInfoReq])
+  }
+}
 
 trait PKProcessor[T] {
   def process(seq: Seq[T]): String
