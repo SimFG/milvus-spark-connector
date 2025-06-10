@@ -1,6 +1,7 @@
 package com.zilliz.spark.connector.binlog
 
 import java.io.{BufferedReader, InputStreamReader}
+import java.io.FileNotFoundException
 import java.net.URI
 import java.util.{Collections, HashMap, Map => JMap}
 import scala.collection.mutable.ArrayBuffer
@@ -31,6 +32,8 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.unsafe.types.UTF8String
 
+import com.zilliz.spark.connector.MilvusClient
+import com.zilliz.spark.connector.MilvusCollectionInfo
 import com.zilliz.spark.connector.MilvusOption
 
 // 1. DataSourceRegister and TableProvider
@@ -77,10 +80,11 @@ class MilvusBinlogDataSource
       partitioning: Array[Transform],
       properties: java.util.Map[String, String]
   ): Table = {
-    logInfo(s"getTable schema, properties: $properties")
+    // logInfo(s"getTable schema, properties: $properties")
     val path = properties.get(MilvusOption.ReaderPath)
-    val collection = properties.get(MilvusOption.MilvusCollectionID)
-    if (path == null && collection == null) {
+    val collectionID = properties.get(MilvusOption.MilvusCollectionID)
+    val collectionName = properties.get(MilvusOption.MilvusCollectionName)
+    if (path == null && collectionID == null && collectionName == null) {
       throw new IllegalArgumentException(
         "Option 'path' or 'collection' is required for milvusbinlog format."
       )
@@ -99,6 +103,30 @@ class MilvusBinlogTable(
     properties: java.util.Map[String, String]
 ) extends Table
     with SupportsRead {
+  val milvusOption = MilvusOption(new CaseInsensitiveStringMap(properties))
+  var milvusCollection: MilvusCollectionInfo = _
+  initInfo()
+
+  def initInfo(): Unit = {
+    if (milvusOption.uri.isEmpty || milvusOption.collectionName.isEmpty) {
+      return
+    }
+    val client = MilvusClient(milvusOption)
+    try {
+      milvusCollection = client
+        .getCollectionInfo(
+          milvusOption.databaseName,
+          milvusOption.collectionName
+        )
+        .getOrElse(
+          throw new Exception(
+            s"Collection ${milvusOption.collectionName} not found"
+          )
+        )
+    } finally {
+      client.close()
+    }
+  }
 
   override def name(): String = s"MilvusBinlogTable"
 
@@ -109,7 +137,11 @@ class MilvusBinlogTable(
         StructType(
           Seq(
             org.apache.spark.sql.types
-              .StructField("data", StringType, true),
+              .StructField(
+                "data",
+                StringType,
+                true
+              ), // TODO simfg long and string
             org.apache.spark.sql.types
               .StructField("timestamp", LongType, true),
             org.apache.spark.sql.types
@@ -130,6 +162,18 @@ class MilvusBinlogTable(
     val mergedOptions: JMap[String, String] = new HashMap[String, String]()
     mergedOptions.putAll(properties)
     mergedOptions.putAll(options)
+
+    if (
+      milvusCollection != null && mergedOptions.get(
+        MilvusOption.MilvusCollectionID
+      ) == null
+    ) {
+      mergedOptions.put(
+        MilvusOption.MilvusCollectionID,
+        milvusCollection.collectionID.toString
+      )
+    }
+
     val allOptions = new CaseInsensitiveStringMap(mergedOptions)
     new MilvusBinlogScanBuilder(schema(), allOptions)
   }
@@ -197,18 +241,51 @@ class MilvusBinlogScan(schema: StructType, options: CaseInsensitiveStringMap)
 
   override def toBatch: Batch = this
 
-  def getBinlogStatuses(fs: FileSystem, segmentPath: Path): Seq[FileStatus] = {
-    val field = options.getOrDefault("field", "")
-    if (readerOptions.readerType == Constants.LogReaderTypeInsert) {
-      fs.listStatus(segmentPath)
-        .filter(_.getPath.getName == field)
-        .filter(_.isDirectory())
-        .flatMap(status => {
-          fs.listStatus(status.getPath())
-        })
-        .toSeq
-    } else {
-      fs.listStatus(segmentPath).toSeq
+  def getBinlogStatuses(
+      fs: FileSystem,
+      client: MilvusClient,
+      segmentPath: Path
+  ): Seq[FileStatus] = {
+    val paths = segmentPath.toString().split("/")
+    val segmentID = paths(paths.length - 1).toLong
+    val collectionID = paths(paths.length - 3).toLong
+    val result = client.getSegmentInfo(collectionID, segmentID)
+    if (result.isFailure) {
+      throw new IllegalArgumentException(
+        s"Failed to get segment info: ${result.failed.get.getMessage}"
+      )
+    }
+    val insertLogIDs = result.get.insertLogIDs
+    val deleteLogIDs = result.get.deleteLogIDs
+    try {
+
+      val field = options.getOrDefault("field", "")
+      if (readerOptions.readerType == Constants.LogReaderTypeInsert) {
+        fs.listStatus(segmentPath)
+          .filter(_.getPath.getName == field)
+          .filter(_.isDirectory())
+          .flatMap(status => {
+            fs.listStatus(status.getPath())
+          })
+          .filter(status => {
+            val paths = status.getPath().toString.split("/")
+            val logID = paths(paths.length - 1)
+            val fieldID = paths(paths.length - 2)
+            insertLogIDs.contains(s"${fieldID}/${logID}")
+          })
+          .toSeq
+      } else {
+        fs.listStatus(segmentPath)
+          .filter(status => {
+            val logID = status.getPath().getName()
+            deleteLogIDs.contains(logID)
+          })
+          .toSeq
+      }
+    } catch {
+      case e: FileNotFoundException =>
+        logWarning(s"Path $segmentPath not found")
+        Seq[FileStatus]()
     }
   }
 
@@ -216,17 +293,38 @@ class MilvusBinlogScan(schema: StructType, options: CaseInsensitiveStringMap)
       fs: FileSystem,
       dirPath: Path
   ): Seq[FileStatus] = {
-    if (!fs.getFileStatus(dirPath).isDirectory) {
-      throw new IllegalArgumentException(
-        s"Path $dirPath is not a directory."
-      )
+    try {
+      if (!fs.getFileStatus(dirPath).isDirectory) {
+        throw new IllegalArgumentException(
+          s"Path $dirPath is not a directory."
+        )
+      }
+      fs.listStatus(dirPath)
+        .filter(_.isDirectory())
+        .filterNot(_.getPath.getName.startsWith("_"))
+        .filterNot(_.getPath.getName.startsWith("."))
+        .toSeq
+    } catch {
+      case e: FileNotFoundException =>
+        logWarning(s"Path $dirPath not found")
+        Seq[FileStatus]()
     }
-    fs.listStatus(dirPath)
-      .filter(_.isDirectory())
-      .filterNot(_.getPath.getName.startsWith("_"))
-      .filterNot(_.getPath.getName.startsWith("."))
-      .toSeq
   }
+
+  def getValidSegments(client: MilvusClient): Seq[String] = {
+    val result = client.getSegments(
+      milvusOption.databaseName,
+      milvusOption.collectionName
+    )
+    result
+      .getOrElse(
+        throw new Exception(
+          s"Failed to get segment info: ${result.failed.get.getMessage}"
+        )
+      )
+      .map(_.segmentID.toString)
+  }
+
   override def planInputPartitions(): Array[InputPartition] = {
     var path = readerOptions.getFilePath(pathOption)
     var fileStatuses = Seq[FileStatus]()
@@ -241,22 +339,43 @@ class MilvusBinlogScan(schema: StructType, options: CaseInsensitiveStringMap)
         readerOptions.s3FileSystemType
       ) && !collection.isEmpty
     ) {
+      val client = MilvusClient(milvusOption)
+
+      var validSegments = Seq[String]()
+      if (segment.isEmpty() && !milvusOption.collectionName.isEmpty()) {
+        validSegments = getValidSegments(client)
+      }
+
       if (!partition.isEmpty && !segment.isEmpty) { // full path
-        fileStatuses = getBinlogStatuses(fs, path)
+        fileStatuses = getBinlogStatuses(fs, client, path)
       } else if (!partition.isEmpty) { // leak segment path
         val segmentStatuses = getPartitionOrSegmentStatuses(fs, path)
-        segmentStatuses.foreach(status => {
-          fileStatuses = fileStatuses ++ getBinlogStatuses(fs, status.getPath())
-        })
+        segmentStatuses
+          .filter(status => validSegments.contains(status.getPath().getName))
+          .foreach(status => {
+            fileStatuses = fileStatuses ++ getBinlogStatuses(
+              fs,
+              client,
+              status.getPath()
+            )
+          })
       } else { // leak partition path
         val partitionStatuses = getPartitionOrSegmentStatuses(fs, path)
         val segmentStatuses = partitionStatuses.flatMap(status => {
           getPartitionOrSegmentStatuses(fs, status.getPath())
         })
-        segmentStatuses.foreach(status => {
-          fileStatuses = fileStatuses ++ getBinlogStatuses(fs, status.getPath())
-        })
+        segmentStatuses
+          .filter(status => validSegments.contains(status.getPath().getName))
+          .foreach(status => {
+            fileStatuses = fileStatuses ++ getBinlogStatuses(
+              fs,
+              client,
+              status.getPath()
+            )
+          })
       }
+
+      client.close()
     } else {
       fileStatuses = if (fs.getFileStatus(path).isDirectory) {
         fs.listStatus(path)
@@ -296,7 +415,7 @@ case class MilvusBinlogReaderOption(
     s3SecretKey: String,
     s3UseSSL: Boolean,
     s3PathStyleAccess: Boolean,
-    beginTimestamp: Long, // inclusive
+    beginTimestamp: Long, // inclusive // TODO delete it, use filter
     endTimestamp: Long // exclusive
 ) extends Serializable
     with Logging {

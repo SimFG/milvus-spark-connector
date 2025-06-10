@@ -25,6 +25,10 @@ import org.apache.spark.sql.connector.read.{
   Scan,
   ScanBuilder
 }
+import org.apache.spark.sql.connector.read.{
+  SupportsPushDownFilters,
+  SupportsPushDownRequiredColumns
+}
 import org.apache.spark.sql.connector.write.{
   BatchWrite,
   DataWriterFactory,
@@ -43,6 +47,7 @@ import org.apache.spark.sql.connector.write.{
   WriterCommitMessage
 }
 import org.apache.spark.sql.sources.DataSourceRegister
+import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.{
   LongType,
   StringType,
@@ -219,6 +224,16 @@ class MilvusScanBuilder(
     schema: StructType,
     options: CaseInsensitiveStringMap
 ) extends ScanBuilder {
+  // with SupportsPushDownFilters
+  // with SupportsPushDownRequiredColumns {
+
+  // TODO: simfg Implement this
+  // override def pruneColumns(requiredSchema: StructType): Unit = ???
+
+  // override def pushFilters(filters: Array[Filter]): Array[Filter] = ???
+
+  // override def pushedFilters(): Array[Filter] = ???
+
   override def build(): Scan = new MilvusScan(schema, options)
 }
 
@@ -307,27 +322,34 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
     val insertLogIDs = result.get.insertLogIDs
 
     val fileStatuses = if (fs.getFileStatus(rootPath).isDirectory) {
-      val fieldDirStatuses = fs
-        .listStatus(rootPath)
-        .filterNot(_.getPath.getName.startsWith("_"))
-        .filterNot(_.getPath.getName.startsWith(".")) // Ignore hidden files
-      fieldDirStatuses
-        .flatMap(fieldDirStatus => {
-          val fieldPath = fieldDirStatus.getPath()
-          if (fs.getFileStatus(fieldPath).isDirectory) {
-            val deepFileStatuses = fs
-              .listStatus(fieldPath)
-              .filterNot(_.getPath.getName.startsWith("_"))
-              .filterNot(
-                _.getPath.getName.startsWith(".")
-              ) // Ignore hidden files
-            deepFileStatuses
-          } else {
-            throw new IllegalArgumentException(
-              s"fieldPath is not a directory: $fieldPath"
-            )
-          }
-        })
+      try {
+        val fieldDirStatuses = fs
+          .listStatus(rootPath)
+          .filterNot(_.getPath.getName.startsWith("_"))
+          .filterNot(_.getPath.getName.startsWith(".")) // Ignore hidden files
+        fieldDirStatuses
+          .flatMap(fieldDirStatus => {
+            val fieldPath = fieldDirStatus.getPath()
+            if (fs.getFileStatus(fieldPath).isDirectory) {
+              val deepFileStatuses = fs
+                .listStatus(fieldPath)
+                .filterNot(_.getPath.getName.startsWith("_"))
+                .filterNot(
+                  _.getPath.getName.startsWith(".")
+                ) // Ignore hidden files
+              deepFileStatuses
+            } else {
+              throw new IllegalArgumentException(
+                s"fieldPath is not a directory: $fieldPath"
+              )
+            }
+          })
+          .toSeq
+      } catch {
+        case e: FileNotFoundException =>
+          logWarning(s"Path $rootPath not found")
+          Seq[FileStatus]()
+      }
     } else {
       // Array(fs.getFileStatus(rootPath))
       throw new IllegalArgumentException(
@@ -395,23 +417,23 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
     val partition = milvusOption.partitionID
     val segment = milvusOption.segmentID
 
-    val milvusClient = MilvusClient(milvusOption)
+    val client = MilvusClient(milvusOption)
 
     var validSegments = Seq[String]()
     if (segment.isEmpty()) {
-      validSegments = getValidSegments(milvusClient)
+      validSegments = getValidSegments(client)
     }
 
     var fieldMaps = Seq[Map[String, String]]()
     if (rawPath.isEmpty) {
       if (!partition.isEmpty() && !segment.isEmpty()) {
-        fieldMaps ++= getSegmentFieldMap(fs, milvusClient, rootPath)
+        fieldMaps ++= getSegmentFieldMap(fs, client, rootPath)
       } else if (!partition.isEmpty()) {
         var segmentStatuses = getCollectionOrPartitionStatuses(fs, rootPath)
         segmentStatuses
           .filter(status => validSegments.contains(status.getPath().getName))
           .foreach(status => {
-            fieldMaps ++= getSegmentFieldMap(fs, milvusClient, status.getPath())
+            fieldMaps ++= getSegmentFieldMap(fs, client, status.getPath())
           })
       } else {
         var partitionStatuses = getCollectionOrPartitionStatuses(fs, rootPath)
@@ -423,21 +445,22 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
             .foreach(status => {
               fieldMaps ++= getSegmentFieldMap(
                 fs,
-                milvusClient,
+                client,
                 status.getPath()
               )
             })
         })
       }
     } else {
-      fieldMaps ++= getSegmentFieldMap(fs, milvusClient, rootPath)
+      fieldMaps ++= getSegmentFieldMap(fs, client, rootPath)
     }
 
     val result = fieldMaps
       .map(fieldMap => MilvusInputPartition(fieldMap): InputPartition)
       .toArray
     fs.close()
-    milvusClient.close()
+    client.close()
+    // TODO: simfg should segment partition
     result
   }
 

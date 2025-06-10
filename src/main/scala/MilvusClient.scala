@@ -538,6 +538,7 @@ class MilvusClient(params: MilvusConnectionParams) {
         )
       }
       var insertLogIDs = Seq[String]()
+      var deleteLogIDs = Seq[String]()
       responseJson
         .get("data")
         .get("segmentInfos")
@@ -558,11 +559,25 @@ class MilvusClient(params: MilvusConnectionParams) {
                   insertLogIDs = insertLogIDs :+ s"${fieldID}/${logID.asLong()}"
                 })
             })
+          info
+            .get("deltaLogs")
+            .elements()
+            .asScala
+            .foreach(deleteLogs => {
+              deleteLogs
+                .get("logIDs")
+                .elements()
+                .asScala
+                .foreach(logID => {
+                  deleteLogIDs = deleteLogIDs :+ logID.asLong().toString
+                })
+            })
         })
       return Success(
         MilvusSegmentLogInfo(
           segmentID = segmentID,
-          insertLogIDs = insertLogIDs
+          insertLogIDs = insertLogIDs,
+          deleteLogIDs = deleteLogIDs
         )
       )
     } catch {
@@ -637,7 +652,8 @@ case class MilvusSegmentInfo(
 
 case class MilvusSegmentLogInfo(
     segmentID: Long,
-    insertLogIDs: Seq[String] // "/field_id/log_id"
+    insertLogIDs: Seq[String], // "/field_id/log_id"
+    deleteLogIDs: Seq[String] // "/log_id"
 )
 
 case class GetSegmentsInfoReq(
@@ -739,6 +755,7 @@ class GrpcRetryInterceptor(
                       (currentDelay * delayMultiplier).toLong,
                       maxDelayMillis
                     )
+                    super.onClose(status, trailers)
                     executeCall()
                   } else {
                     println(
