@@ -180,8 +180,12 @@ case class MilvusTable(
         field.fieldID
       }
     }
-    fields = fields :+ StructField("rowID", LongType, false)
-    fields = fields :+ StructField("timestamp", LongType, false)
+    if (fieldIDs.isEmpty || fieldIDs.contains("0")) {
+      fields = fields :+ StructField("row_id", LongType, false)
+    }
+    if (fieldIDs.isEmpty || fieldIDs.contains("1")) {
+      fields = fields :+ StructField("timestamp", LongType, false)
+    }
     fields = fields ++ milvusCollection.schema.fields
       .filter(field =>
         fieldIDs.isEmpty || fieldIDs.contains(fieldName2ID(field.name).toString)
@@ -223,18 +227,56 @@ case class MilvusWriteBuilder(
 class MilvusScanBuilder(
     schema: StructType,
     options: CaseInsensitiveStringMap
-) extends ScanBuilder {
-  // with SupportsPushDownFilters
-  // with SupportsPushDownRequiredColumns {
+) extends ScanBuilder
+    // with SupportsPushDownFilters
+    with SupportsPushDownRequiredColumns {
+  private var currentSchema = schema
+  private var currentOptions = options
+
+  override def pruneColumns(requiredSchema: StructType): Unit = {
+    val fieldName2ID = mutable.Map[String, Long]()
+    schema.fields.zipWithIndex.foreach { case (field, index) =>
+      if (index < 2) {
+        fieldName2ID(field.name) = index
+      } else {
+        fieldName2ID(field.name) = index + 98
+      }
+    }
+    var fieldNames = Seq[String]()
+    requiredSchema.fields.foreach(field => {
+      if (fieldName2ID.contains(field.name)) {
+        fieldNames = fieldNames :+ field.name
+      }
+    })
+    fieldNames = fieldNames.sortBy(fieldName => fieldName2ID(fieldName))
+
+    val tmpMap = new HashMap[String, String]()
+    options.asScala.foreach { case (key, value) =>
+      tmpMap.put(key, value)
+    }
+    tmpMap.put(
+      MilvusOption.ReaderFieldIDs,
+      fieldNames
+        .map(fieldName => fieldName2ID(fieldName).toString)
+        .mkString(",")
+    )
+
+    currentOptions = new CaseInsensitiveStringMap(tmpMap)
+    currentSchema = StructType(
+      fieldNames
+        .map(fieldName => {
+          schema.fields.find(field => field.name == fieldName).get
+        })
+        .toSeq
+    )
+  }
 
   // TODO: simfg Implement this
-  // override def pruneColumns(requiredSchema: StructType): Unit = ???
-
   // override def pushFilters(filters: Array[Filter]): Array[Filter] = ???
 
   // override def pushedFilters(): Array[Filter] = ???
 
-  override def build(): Scan = new MilvusScan(schema, options)
+  override def build(): Scan = new MilvusScan(currentSchema, currentOptions)
 }
 
 class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
@@ -251,8 +293,9 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
   }
   private val fieldIDs =
     if (options.get(MilvusOption.ReaderFieldIDs) != null) {
-      val optionIDs = options.get(MilvusOption.ReaderFieldIDs).split(",").toSeq
-      optionIDs ++ Seq[String]("0", "1")
+      // val optionIDs = options.get(MilvusOption.ReaderFieldIDs).split(",").toSeq
+      // optionIDs ++ Seq[String]("0", "1")
+      options.get(MilvusOption.ReaderFieldIDs).split(",").toSeq
     } else {
       Seq[String]()
     }

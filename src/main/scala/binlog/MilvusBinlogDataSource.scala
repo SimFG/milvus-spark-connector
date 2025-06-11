@@ -200,8 +200,14 @@ class MilvusBinlogTable(
 class MilvusBinlogScanBuilder(
     schema: StructType,
     options: CaseInsensitiveStringMap
-) extends ScanBuilder {
-  override def build(): Scan = new MilvusBinlogScan(schema, options)
+) extends ScanBuilder
+    with SupportsPushDownRequiredColumns {
+
+  private var currentSchema = schema
+  override def pruneColumns(requiredSchema: StructType): Unit = {
+    currentSchema = requiredSchema
+  }
+  override def build(): Scan = new MilvusBinlogScan(currentSchema, options)
 }
 
 // 4. Scan (Batch Scan)
@@ -416,7 +422,7 @@ class MilvusBinlogScan(schema: StructType, options: CaseInsensitiveStringMap)
   }
 
   override def createReaderFactory(): PartitionReaderFactory = {
-    new MilvusBinlogPartitionReaderFactory(options)
+    new MilvusBinlogPartitionReaderFactory(schema, options)
   }
 }
 
@@ -519,8 +525,10 @@ object MilvusBinlogReaderOption {
 }
 
 // 5. PartitionReaderFactory
-class MilvusBinlogPartitionReaderFactory(options: CaseInsensitiveStringMap)
-    extends PartitionReaderFactory {
+class MilvusBinlogPartitionReaderFactory(
+    schema: StructType,
+    options: CaseInsensitiveStringMap
+) extends PartitionReaderFactory {
 
   private val readerOptions = MilvusBinlogReaderOption(options)
 
@@ -528,12 +536,13 @@ class MilvusBinlogPartitionReaderFactory(options: CaseInsensitiveStringMap)
       partition: InputPartition
   ): PartitionReader[InternalRow] = {
     val filePath = partition.asInstanceOf[MilvusBinlogInputPartition].filePath
-    new MilvusBinlogPartitionReader(filePath, readerOptions)
+    new MilvusBinlogPartitionReader(schema, filePath, readerOptions)
   }
 }
 
 // 6. PartitionReader
 class MilvusBinlogPartitionReader(
+    schema: StructType,
     filePath: String,
     options: MilvusBinlogReaderOption
 ) extends PartitionReader[InternalRow]
@@ -562,6 +571,38 @@ class MilvusBinlogPartitionReader(
     }
   }
 
+  private def getFinalRow(
+      isDelete: Boolean,
+      data: String,
+      timestamp: Long,
+      dataType: Int
+  ): InternalRow = {
+    val values = scala.collection.mutable.ArrayBuffer[Any]()
+    schema.fields.map(field => {
+      field.name match {
+        case "data" => {
+          if (isDelete && MilvusOption.isInt64PK(options.milvusPKType)) {
+            values.append(data.toLong)
+          } else {
+            values.append(UTF8String.fromString(data))
+          }
+        }
+        case "timestamp" => {
+          values.append(timestamp)
+        }
+        case "data_type" => {
+          values.append(dataType)
+        }
+        case _ => {
+          throw new IllegalArgumentException(
+            s"Unsupported field name: ${field.name}"
+          )
+        }
+      }
+    })
+    InternalRow.fromSeq(values.toSeq)
+  }
+
   private def readInsertEvent(): Boolean = {
     if (insertEvent != null && currentIndex == insertEvent.datas.length - 1) {
       insertEvent = null
@@ -582,8 +623,9 @@ class MilvusBinlogPartitionReader(
     val timestamp = insertEvent.timestamp
     val dataType = insertEvent.dataType.value
 
-    InternalRow(
-      UTF8String.fromString(data),
+    getFinalRow(
+      false,
+      data,
       timestamp,
       dataType
     )
@@ -609,12 +651,9 @@ class MilvusBinlogPartitionReader(
     val timestamp = deleteEvent.timestamps(currentIndex)
     val pkType = deleteEvent.pkType.value
 
-    InternalRow(
-      if (MilvusOption.isInt64PK(options.milvusPKType)) {
-        pk.toLong
-      } else {
-        UTF8String.fromString(pk)
-      },
+    getFinalRow(
+      true,
+      pk,
       timestamp,
       pkType
     )
