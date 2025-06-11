@@ -148,24 +148,20 @@ class MilvusBinlogTable(
     }
     milvusPKType = optionPKType
 
-    Option(customSchema)
-      .filter(_.fields.nonEmpty)
-      .getOrElse(
-        StructType(
-          Seq(
-            org.apache.spark.sql.types
-              .StructField(
-                "data",
-                sparkPKType,
-                true
-              ),
-            org.apache.spark.sql.types
-              .StructField("timestamp", LongType, true),
-            org.apache.spark.sql.types
-              .StructField("data_type", IntegerType, true)
-          )
-        )
+    StructType(
+      Seq(
+        org.apache.spark.sql.types
+          .StructField(
+            "data",
+            sparkPKType,
+            true
+          ),
+        org.apache.spark.sql.types
+          .StructField("timestamp", LongType, true),
+        org.apache.spark.sql.types
+          .StructField("data_type", IntegerType, true)
       )
+    )
   }
 
   override def capabilities(): java.util.Set[TableCapability] = {
@@ -587,11 +583,7 @@ class MilvusBinlogPartitionReader(
     val dataType = insertEvent.dataType.value
 
     InternalRow(
-      if (MilvusOption.isInt64PK(options.milvusPKType)) {
-        data.toLong
-      } else {
-        UTF8String.fromString(data)
-      },
+      UTF8String.fromString(data),
       timestamp,
       dataType
     )
@@ -618,7 +610,11 @@ class MilvusBinlogPartitionReader(
     val pkType = deleteEvent.pkType.value
 
     InternalRow(
-      UTF8String.fromString(pk),
+      if (MilvusOption.isInt64PK(options.milvusPKType)) {
+        pk.toLong
+      } else {
+        UTF8String.fromString(pk)
+      },
       timestamp,
       pkType
     )
