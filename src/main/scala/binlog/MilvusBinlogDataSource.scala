@@ -22,7 +22,7 @@ import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.connector.read._
 import org.apache.spark.sql.sources.DataSourceRegister
 import org.apache.spark.sql.types.{
-  DataType,
+  DataType => SparkDataType,
   IntegerType,
   LongType,
   StringType,
@@ -32,9 +32,12 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.unsafe.types.UTF8String
 
-import com.zilliz.spark.connector.MilvusClient
-import com.zilliz.spark.connector.MilvusCollectionInfo
-import com.zilliz.spark.connector.MilvusOption
+import com.zilliz.spark.connector.{
+  MilvusClient,
+  MilvusCollectionInfo,
+  MilvusOption
+}
+import io.milvus.grpc.schema.DataType
 
 // 1. DataSourceRegister and TableProvider
 class MilvusBinlogDataSource
@@ -106,6 +109,7 @@ class MilvusBinlogTable(
   val milvusOption = MilvusOption(new CaseInsensitiveStringMap(properties))
   var milvusCollection: MilvusCollectionInfo = _
   initInfo()
+  var milvusPKType: String = ""
 
   def initInfo(): Unit = {
     if (milvusOption.uri.isEmpty || milvusOption.collectionName.isEmpty) {
@@ -131,6 +135,19 @@ class MilvusBinlogTable(
   override def name(): String = s"MilvusBinlogTable"
 
   override def schema(): StructType = {
+    var sparkPKType: SparkDataType = StringType
+    var optionPKType: String = milvusOption.collectionPKType.toLowerCase()
+    if (optionPKType.isEmpty && milvusCollection != null) {
+      val pkField = milvusCollection.schema.fields.find(_.isPrimaryKey)
+      if (pkField.isDefined && pkField.get.dataType == DataType.Int64) {
+        optionPKType = "int64"
+      }
+    }
+    if (MilvusOption.isInt64PK(optionPKType)) {
+      sparkPKType = LongType
+    }
+    milvusPKType = optionPKType
+
     Option(customSchema)
       .filter(_.fields.nonEmpty)
       .getOrElse(
@@ -139,9 +156,9 @@ class MilvusBinlogTable(
             org.apache.spark.sql.types
               .StructField(
                 "data",
-                StringType,
+                sparkPKType,
                 true
-              ), // TODO simfg long and string
+              ),
             org.apache.spark.sql.types
               .StructField("timestamp", LongType, true),
             org.apache.spark.sql.types
@@ -173,6 +190,10 @@ class MilvusBinlogTable(
         milvusCollection.collectionID.toString
       )
     }
+    mergedOptions.put(
+      MilvusOption.MilvusCollectionPKType,
+      milvusPKType
+    )
 
     val allOptions = new CaseInsensitiveStringMap(mergedOptions)
     new MilvusBinlogScanBuilder(schema(), allOptions)
@@ -416,7 +437,8 @@ case class MilvusBinlogReaderOption(
     s3UseSSL: Boolean,
     s3PathStyleAccess: Boolean,
     beginTimestamp: Long, // inclusive // TODO delete it, use filter
-    endTimestamp: Long // exclusive
+    endTimestamp: Long, // exclusive
+    milvusPKType: String
 ) extends Serializable
     with Logging {
   def notEmpty(str: String): Boolean = str != null && str.trim.nonEmpty
@@ -494,7 +516,8 @@ object MilvusBinlogReaderOption {
       options.getOrDefault(Constants.S3UseSSL, "false").toBoolean,
       options.getOrDefault(Constants.S3PathStyleAccess, "true").toBoolean,
       options.getOrDefault(Constants.LogReaderBeginTimestamp, "0").toLong,
-      options.getOrDefault(Constants.LogReaderEndTimestamp, "0").toLong
+      options.getOrDefault(Constants.LogReaderEndTimestamp, "0").toLong,
+      options.getOrDefault(MilvusOption.MilvusCollectionPKType, "")
     )
   }
 }
@@ -564,7 +587,11 @@ class MilvusBinlogPartitionReader(
     val dataType = insertEvent.dataType.value
 
     InternalRow(
-      UTF8String.fromString(data),
+      if (MilvusOption.isInt64PK(options.milvusPKType)) {
+        data.toLong
+      } else {
+        UTF8String.fromString(data)
+      },
       timestamp,
       dataType
     )

@@ -17,6 +17,7 @@ case class MilvusOption(
     databaseName: String = "",
     collectionName: String = "",
     partitionName: String = "",
+    collectionPKType: String = "",
     insertMaxBatchSize: Int = 0,
     retryCount: Int = 3,
     retryInterval: Int = 1000,
@@ -38,6 +39,7 @@ object MilvusOption {
   val MilvusDatabaseName = "milvus.database.name"
   val MilvusCollectionName = "milvus.collection.name"
   val MilvusPartitionName = "milvus.partition.name"
+  val MilvusCollectionPKType = "milvus.collection.pkType"
   val MilvusCollectionID = "milvus.collection.id"
   val MilvusPartitionID = "milvus.partition.id"
   val MilvusSegmentID = "milvus.segment.id"
@@ -75,6 +77,7 @@ object MilvusOption {
     val databaseName = options.getOrDefault(MilvusDatabaseName, "")
     val collectionName = options.getOrDefault(MilvusCollectionName, "")
     val partitionName = options.getOrDefault(MilvusPartitionName, "")
+    val collectionPKType = options.getOrDefault(MilvusCollectionPKType, "")
     val collectionID = options.getOrDefault(MilvusCollectionID, "")
     val partitionID = options.getOrDefault(MilvusPartitionID, "")
     val segmentID = options.getOrDefault(MilvusSegmentID, "")
@@ -96,6 +99,7 @@ object MilvusOption {
       databaseName,
       collectionName,
       partitionName,
+      collectionPKType,
       insertMaxBatchSize,
       retryCount,
       retryInterval,
@@ -105,5 +109,9 @@ object MilvusOption {
       fieldID,
       fieldIDs
     )
+  }
+
+  def isInt64PK(milvusPKType: String): Boolean = {
+    milvusPKType.toLowerCase() == "int64"
   }
 }
