@@ -38,8 +38,6 @@ object Constants {
   val LogReaderTypeParamName = "reader.type"
   val LogReaderTypeInsert = "insert"
   val LogReaderTypeDelete = "delete"
-  val LogReaderBeginTimestamp = "reader.ts.begin"
-  val LogReaderEndTimestamp = "reader.ts.end"
   val LogReaderFieldIDs = "reader.field.ids"
 
   // s3 config

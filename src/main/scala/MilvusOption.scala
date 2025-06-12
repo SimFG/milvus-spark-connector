@@ -51,8 +51,6 @@ object MilvusOption {
   // reader config
   val ReaderPath = Constants.LogReaderPathParamName
   val ReaderType = Constants.LogReaderTypeParamName
-  val ReaderBeginTimestamp = Constants.LogReaderBeginTimestamp
-  val ReaderEndTimestamp = Constants.LogReaderEndTimestamp
   val ReaderFieldIDs = Constants.LogReaderFieldIDs
 
   // s3 config

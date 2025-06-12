@@ -49,6 +49,7 @@ import org.apache.spark.sql.connector.write.{
 import org.apache.spark.sql.sources.DataSourceRegister
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.{
+  DataTypes => SparkDataTypes,
   LongType,
   StringType,
   StructField,
@@ -228,10 +229,13 @@ class MilvusScanBuilder(
     schema: StructType,
     options: CaseInsensitiveStringMap
 ) extends ScanBuilder
-    // with SupportsPushDownFilters
+    with SupportsPushDownFilters
     with SupportsPushDownRequiredColumns {
   private var currentSchema = schema
   private var currentOptions = options
+
+  // Store the filters that can be pushed down
+  private var pushedFilterArray: Array[Filter] = Array.empty[Filter]
 
   override def pruneColumns(requiredSchema: StructType): Unit = {
     val fieldName2ID = mutable.Map[String, Long]()
@@ -271,16 +275,75 @@ class MilvusScanBuilder(
     )
   }
 
-  // TODO: simfg Implement this
-  // override def pushFilters(filters: Array[Filter]): Array[Filter] = ???
+  override def pushFilters(filters: Array[Filter]): Array[Filter] = {
+    val (supportedFilters, unsupportedFilters) =
+      filters.partition(isSupportedFilter)
+    pushedFilterArray = supportedFilters
+    unsupportedFilters
+  }
 
-  // override def pushedFilters(): Array[Filter] = ???
+  override def pushedFilters(): Array[Filter] = pushedFilterArray
 
-  override def build(): Scan = new MilvusScan(currentSchema, currentOptions)
+  private def isSupportedFilter(filter: Filter): Boolean = {
+    import org.apache.spark.sql.sources._
+    filter match {
+      // Support equality filters on string and numeric columns
+      case EqualTo(attr, _) => isStringOrNumericColumn(attr)
+      // Support numeric comparison filters only on numeric columns
+      case GreaterThan(attr, _)        => isNumericColumn(attr)
+      case GreaterThanOrEqual(attr, _) => isNumericColumn(attr)
+      case LessThan(attr, _)           => isNumericColumn(attr)
+      case LessThanOrEqual(attr, _)    => isNumericColumn(attr)
+      // Support IN filters on string and numeric columns
+      case In(attr, _)     => isStringOrNumericColumn(attr)
+      case IsNull(attr)    => isStringOrNumericColumn(attr)
+      case IsNotNull(attr) => isStringOrNumericColumn(attr)
+      // Support AND combinations of supported filters
+      case And(left, right) =>
+        isSupportedFilter(left) && isSupportedFilter(right)
+      // Support OR combinations of supported filters
+      case Or(left, right) =>
+        isSupportedFilter(left) && isSupportedFilter(right)
+      case _ => false
+    }
+  }
+
+  private def isStringOrNumericColumn(columnName: String): Boolean = {
+    schema.fields.find(_.name == columnName) match {
+      case Some(field) =>
+        field.dataType match {
+          case StringType | LongType | SparkDataTypes.IntegerType |
+              SparkDataTypes.DoubleType | SparkDataTypes.FloatType |
+              SparkDataTypes.BooleanType =>
+            true
+          case _ => false
+        }
+      case None => false
+    }
+  }
+
+  private def isNumericColumn(columnName: String): Boolean = {
+    schema.fields.find(_.name == columnName) match {
+      case Some(field) =>
+        field.dataType match {
+          case LongType | SparkDataTypes.IntegerType |
+              SparkDataTypes.DoubleType | SparkDataTypes.FloatType =>
+            true
+          case _ => false
+        }
+      case None => false
+    }
+  }
+
+  override def build(): Scan =
+    new MilvusScan(currentSchema, currentOptions, pushedFilterArray)
 }
 
-class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
-    extends Scan
+class MilvusScan(
+    schema: StructType,
+    options: CaseInsensitiveStringMap,
+    pushedFilters: Array[Filter] = Array.empty[Filter]
+) extends Scan
     with Batch
     with Logging {
   private val milvusOption = MilvusOption(options)
@@ -508,7 +571,7 @@ class MilvusScan(schema: StructType, options: CaseInsensitiveStringMap)
   }
 
   override def createReaderFactory(): PartitionReaderFactory = {
-    new MilvusReaderFactory(schema, options)
+    new MilvusReaderFactory(schema, options, pushedFilters)
   }
 }
 
@@ -552,7 +615,8 @@ case class MilvusInputPartition(fieldFiles: Map[String, String])
 
 class MilvusReaderFactory(
     schema: StructType,
-    options: CaseInsensitiveStringMap
+    options: CaseInsensitiveStringMap,
+    pushedFilters: Array[Filter] = Array.empty[Filter]
 ) extends PartitionReaderFactory {
 
   private val readerOptions = MilvusBinlogReaderOption(options)
@@ -562,6 +626,11 @@ class MilvusReaderFactory(
   ): PartitionReader[InternalRow] = {
     val milvusPartition = partition.asInstanceOf[MilvusInputPartition]
     // Create the data reader with the file map, schema, and options
-    new MilvusPartitionReader(schema, milvusPartition.fieldFiles, readerOptions)
+    new MilvusPartitionReader(
+      schema,
+      milvusPartition.fieldFiles,
+      readerOptions,
+      pushedFilters
+    )
   }
 }

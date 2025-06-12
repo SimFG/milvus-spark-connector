@@ -9,6 +9,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.util.{ArrayBasedMapData, ArrayData}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.connector.read.PartitionReader
+import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.{
   ArrayType,
   DataTypes => SparkDataTypes,
@@ -31,7 +32,8 @@ import io.milvus.grpc.schema.{DataType => MilvusDataType}
 class MilvusPartitionReader(
     schema: StructType,
     fieldFiles: Map[String, String],
-    options: MilvusBinlogReaderOption
+    options: MilvusBinlogReaderOption,
+    pushedFilters: Array[Filter] = Array.empty[Filter]
 ) extends PartitionReader[InternalRow]
     with Logging {
   private val readerType: String = options.readerType
@@ -210,45 +212,37 @@ class MilvusPartitionReader(
       return false
     }
 
-    val timestampFieldReader = fieldFileReaders.getOrElse(
-      Constants.TimestampFieldID,
-      throw new IllegalStateException(
-        s"Timestamp field not found in partition"
-      )
-    )
-    if (options.beginTimestamp > 0 || options.endTimestamp > 0) {
-      breakable {
-        while (timestampFieldReader.hasNext()) {
-          val timestamp = timestampFieldReader.readNextRecord()
-          if (
-            (timestamp.toLong < options.beginTimestamp && options.beginTimestamp > 0) ||
-            (timestamp.toLong >= options.endTimestamp && options.endTimestamp > 0)
-          ) {
-            fieldFileReaders.values.foreach { reader =>
-              reader.moveToNextRecord()
-              reader.hasNext()
-            }
-          } else {
-            break
-          }
+    var hasNext = false
+    do {
+      // Check if ALL field readers have a next record
+      val allHaveNext = fieldFileReaders.values.forall(_.hasNext())
+
+      // Consistency check: If some have next and some don't, it's an alignment error
+      if (!allHaveNext && fieldFileReaders.values.exists(_.hasNext())) {
+        val status = fieldFileReaders
+          .map { case (name, reader) => s"$name: ${reader.hasNext()}" }
+          .mkString(", ")
+        throw new IllegalStateException(
+          s"Record count mismatch between field files in partition. Status: $status"
+        )
+      }
+
+      hasNext = allHaveNext
+
+      // If we have a next record, check if it passes the filters
+      if (hasNext) {
+        val row = buildCurrentRow()
+        if (applyFilters(row)) {
+          return true // Found a row that passes the filters
+        }
+        // If the row doesn't pass the filters, move to next record and continue
+        fieldFileReaders.values.foreach { reader =>
+          reader.moveToNextRecord()
         }
       }
-    }
+    } while (hasNext)
 
-    // Check if ALL field readers have a next record
-    val allHaveNext = fieldFileReaders.values.forall(_.hasNext())
-
-    // Consistency check: If some have next and some don't, it's an alignment error
-    if (!allHaveNext && fieldFileReaders.values.exists(_.hasNext())) {
-      val status = fieldFileReaders
-        .map { case (name, reader) => s"$name: ${reader.hasNext()}" }
-        .mkString(", ")
-      throw new IllegalStateException(
-        s"Record count mismatch between field files in partition. Status: $status"
-      )
-    }
-
-    allHaveNext // Return true only if all readers have a next record
+    false // No more rows or no rows that pass the filters
   }
 
   // Get the current row by reading one record from each field reader
@@ -391,6 +385,174 @@ class MilvusPartitionReader(
           s"Unsupported data type for setting value at ordinal $ordinal: $dataType"
         )
         row.setNullAt(ordinal)
+    }
+  }
+
+  private def buildCurrentRow(): InternalRow = {
+    if (fieldFileReaders.isEmpty) {
+      throw new IllegalStateException(
+        "MilvusDataReader.buildCurrentRow() called before open() or with empty readers."
+      )
+    }
+
+    // Create a new InternalRow with the correct number of fields
+    val row = InternalRow.fromSeq(Seq.fill(fieldFileReaders.size)(null))
+
+    // Read one record from each field reader and set the corresponding field in the row
+    // Ensure the order matches the schema's field order
+    // Convert field names to integers and sort them
+    val sortedFieldIndices = fieldFileReaders.keys
+      .map(fieldName => fieldName.toInt)
+      .toSeq
+      .sorted
+      .zipWithIndex
+    sortedFieldIndices.foreach { case (fieldID, index) =>
+      fieldFileReaders.get(fieldID.toString) match {
+        case Some(reader) =>
+          try {
+            val fieldValue = reader.readNextRecord()
+            setInternalRowValue(
+              row,
+              index,
+              fieldValue,
+              reader.getDataType()
+            )
+          } catch {
+            case e: Exception =>
+              logError(
+                s"Error reading record for field '$fieldID' from file ${fieldFiles
+                    .getOrElse(fieldID.toString, "N/A")}",
+                e
+              )
+              // Handle error: set null, throw exception, or skip row
+              row.setNullAt(index) // Example: set null on error
+          }
+        case None =>
+          // This should not happen if planInputPartitions and open were correct
+          logError(s"No reader found for schema field: $fieldID")
+          row.setNullAt(index) // Set null if reader is missing
+      }
+    }
+
+    row // Return the populated row
+  }
+
+  private def applyFilters(row: InternalRow): Boolean = {
+    import org.apache.spark.sql.sources._
+    import org.apache.spark.unsafe.types.UTF8String
+
+    if (pushedFilters.isEmpty) {
+      return true
+    }
+
+    pushedFilters.forall(filter => evaluateFilter(filter, row))
+  }
+
+  private def evaluateFilter(filter: Filter, row: InternalRow): Boolean = {
+    import org.apache.spark.sql.sources._
+    import org.apache.spark.unsafe.types.UTF8String
+
+    filter match {
+      case EqualTo(attr, value) =>
+        val columnIndex = getColumnIndex(attr)
+        if (columnIndex == -1) return true
+        val rowValue = getRowValue(row, columnIndex, attr)
+        rowValue == value
+
+      case GreaterThan(attr, value) =>
+        val columnIndex = getColumnIndex(attr)
+        if (columnIndex == -1) return true
+        val rowValue = getRowValue(row, columnIndex, attr)
+        compareValues(rowValue, value) > 0
+
+      case GreaterThanOrEqual(attr, value) =>
+        val columnIndex = getColumnIndex(attr)
+        if (columnIndex == -1) return true
+        val rowValue = getRowValue(row, columnIndex, attr)
+        compareValues(rowValue, value) >= 0
+
+      case LessThan(attr, value) =>
+        val columnIndex = getColumnIndex(attr)
+        if (columnIndex == -1) return true
+        val rowValue = getRowValue(row, columnIndex, attr)
+        compareValues(rowValue, value) < 0
+
+      case LessThanOrEqual(attr, value) =>
+        val columnIndex = getColumnIndex(attr)
+        if (columnIndex == -1) return true
+        val rowValue = getRowValue(row, columnIndex, attr)
+        compareValues(rowValue, value) <= 0
+
+      case In(attr, values) =>
+        val columnIndex = getColumnIndex(attr)
+        if (columnIndex == -1) return true
+        val rowValue = getRowValue(row, columnIndex, attr)
+        values.contains(rowValue)
+
+      case IsNull(attr) =>
+        val columnIndex = getColumnIndex(attr)
+        if (columnIndex == -1) return true
+        row.isNullAt(columnIndex)
+
+      case IsNotNull(attr) =>
+        val columnIndex = getColumnIndex(attr)
+        if (columnIndex == -1) return true
+        !row.isNullAt(columnIndex)
+
+      case And(left, right) =>
+        evaluateFilter(left, row) && evaluateFilter(right, row)
+
+      case Or(left, right) =>
+        evaluateFilter(left, row) || evaluateFilter(right, row)
+
+      case _ => true // Unsupported filter, don't filter out
+    }
+  }
+
+  private def getColumnIndex(columnName: String): Int = {
+    try {
+      schema.fieldIndex(columnName)
+    } catch {
+      case _: IllegalArgumentException => -1
+    }
+  }
+
+  private def getRowValue(
+      row: InternalRow,
+      columnIndex: Int,
+      columnName: String
+  ): Any = {
+    if (row.isNullAt(columnIndex)) {
+      return null
+    }
+
+    schema.fields(columnIndex).dataType match {
+      case SparkDataTypes.LongType    => row.getLong(columnIndex)
+      case SparkDataTypes.IntegerType => row.getInt(columnIndex)
+      case SparkDataTypes.FloatType   => row.getFloat(columnIndex)
+      case SparkDataTypes.DoubleType  => row.getDouble(columnIndex)
+      case SparkDataTypes.StringType =>
+        row.getUTF8String(columnIndex).toString
+      case SparkDataTypes.BooleanType => row.getBoolean(columnIndex)
+      case _ => row.get(columnIndex, schema.fields(columnIndex).dataType)
+    }
+  }
+
+  private def compareValues(rowValue: Any, filterValue: Any): Int = {
+    (rowValue, filterValue) match {
+      case (rv: Long, fv: Long)       => rv.compareTo(fv)
+      case (rv: Long, fv: Int)        => rv.compareTo(fv.toLong)
+      case (rv: Int, fv: Long)        => rv.toLong.compareTo(fv)
+      case (rv: Int, fv: Int)         => rv.compareTo(fv)
+      case (rv: Float, fv: Float)     => rv.compareTo(fv)
+      case (rv: Double, fv: Double)   => rv.compareTo(fv)
+      case (rv: String, fv: String)   => rv.compareTo(fv)
+      case (rv: Boolean, fv: Boolean) => rv.compareTo(fv)
+      case (rv: Long, fv: String)     => rv.toString.compareTo(fv)
+      case (rv: String, fv: Long)     => rv.compareTo(fv.toString)
+      case (rv: Boolean, fv: String)  => rv.toString.compareTo(fv)
+      case (rv: String, fv: Boolean)  => rv.compareTo(fv.toString)
+      case _ => 0 // Default to equal if types don't match
     }
   }
 

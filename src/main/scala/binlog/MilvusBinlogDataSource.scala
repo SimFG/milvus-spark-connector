@@ -479,8 +479,6 @@ case class MilvusBinlogReaderOption(
     s3SecretKey: String,
     s3UseSSL: Boolean,
     s3PathStyleAccess: Boolean,
-    beginTimestamp: Long, // inclusive // TODO delete it, use filter
-    endTimestamp: Long, // exclusive
     milvusPKType: String
 ) extends Serializable
     with Logging {
@@ -558,8 +556,6 @@ object MilvusBinlogReaderOption {
       options.getOrDefault(Constants.S3SecretKey, "minioadmin"),
       options.getOrDefault(Constants.S3UseSSL, "false").toBoolean,
       options.getOrDefault(Constants.S3PathStyleAccess, "true").toBoolean,
-      options.getOrDefault(Constants.LogReaderBeginTimestamp, "0").toLong,
-      options.getOrDefault(Constants.LogReaderEndTimestamp, "0").toLong,
       options.getOrDefault(MilvusOption.MilvusCollectionPKType, "")
     )
   }
