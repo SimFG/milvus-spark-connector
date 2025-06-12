@@ -20,7 +20,9 @@ import org.apache.spark.sql.connector.catalog.{
 import org.apache.spark.sql.connector.catalog.SupportsRead
 import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.connector.read._
+import org.apache.spark.sql.sources._
 import org.apache.spark.sql.sources.DataSourceRegister
+import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.{
   DataType => SparkDataType,
   IntegerType,
@@ -201,18 +203,57 @@ class MilvusBinlogScanBuilder(
     schema: StructType,
     options: CaseInsensitiveStringMap
 ) extends ScanBuilder
-    with SupportsPushDownRequiredColumns {
+    with SupportsPushDownRequiredColumns
+    with SupportsPushDownFilters {
+
+  // Store the filters that can be pushed down
+  private var pushedFilterArray: Array[Filter] = Array.empty[Filter]
+
+  override def pushFilters(filters: Array[Filter]): Array[Filter] = {
+    val (supportedFilters, unsupportedFilters) =
+      filters.partition(isSupportedFilter)
+    pushedFilterArray = supportedFilters
+    unsupportedFilters
+  }
+
+  override def pushedFilters(): Array[Filter] = pushedFilterArray
+
+  private def isSupportedFilter(filter: Filter): Boolean = {
+    import org.apache.spark.sql.sources._
+    filter match {
+      // Support equality filters on data and timestamp columns
+      case EqualTo(attr, _) => attr.equals("data") || attr.equals("timestamp")
+      case GreaterThan(attr, _)        => attr.equals("timestamp")
+      case GreaterThanOrEqual(attr, _) => attr.equals("timestamp")
+      case LessThan(attr, _)           => attr.equals("timestamp")
+      case LessThanOrEqual(attr, _)    => attr.equals("timestamp")
+      case In(attr, _)     => attr.equals("data") || attr.equals("timestamp")
+      case IsNull(attr)    => attr.equals("data") || attr.equals("timestamp")
+      case IsNotNull(attr) => attr.equals("data") || attr.equals("timestamp")
+      // Support AND combinations of supported filters
+      case And(left, right) =>
+        isSupportedFilter(left) && isSupportedFilter(right)
+      // Support OR combinations of supported filters
+      case Or(left, right) =>
+        isSupportedFilter(left) && isSupportedFilter(right)
+      case _ => false
+    }
+  }
 
   private var currentSchema = schema
   override def pruneColumns(requiredSchema: StructType): Unit = {
     currentSchema = requiredSchema
   }
-  override def build(): Scan = new MilvusBinlogScan(currentSchema, options)
+  override def build(): Scan =
+    new MilvusBinlogScan(currentSchema, options, pushedFilterArray)
 }
 
 // 4. Scan (Batch Scan)
-class MilvusBinlogScan(schema: StructType, options: CaseInsensitiveStringMap)
-    extends Scan
+class MilvusBinlogScan(
+    schema: StructType,
+    options: CaseInsensitiveStringMap,
+    pushedFilters: Array[Filter]
+) extends Scan
     with Batch
     with Logging {
   private val milvusOption = MilvusOption(options)
@@ -422,7 +463,7 @@ class MilvusBinlogScan(schema: StructType, options: CaseInsensitiveStringMap)
   }
 
   override def createReaderFactory(): PartitionReaderFactory = {
-    new MilvusBinlogPartitionReaderFactory(schema, options)
+    new MilvusBinlogPartitionReaderFactory(schema, options, pushedFilters)
   }
 }
 
@@ -527,7 +568,8 @@ object MilvusBinlogReaderOption {
 // 5. PartitionReaderFactory
 class MilvusBinlogPartitionReaderFactory(
     schema: StructType,
-    options: CaseInsensitiveStringMap
+    options: CaseInsensitiveStringMap,
+    pushedFilters: Array[Filter]
 ) extends PartitionReaderFactory {
 
   private val readerOptions = MilvusBinlogReaderOption(options)
@@ -536,7 +578,12 @@ class MilvusBinlogPartitionReaderFactory(
       partition: InputPartition
   ): PartitionReader[InternalRow] = {
     val filePath = partition.asInstanceOf[MilvusBinlogInputPartition].filePath
-    new MilvusBinlogPartitionReader(schema, filePath, readerOptions)
+    new MilvusBinlogPartitionReader(
+      schema,
+      filePath,
+      readerOptions,
+      pushedFilters
+    )
   }
 }
 
@@ -544,7 +591,8 @@ class MilvusBinlogPartitionReaderFactory(
 class MilvusBinlogPartitionReader(
     schema: StructType,
     filePath: String,
-    options: MilvusBinlogReaderOption
+    options: MilvusBinlogReaderOption,
+    pushedFilters: Array[Filter]
 ) extends PartitionReader[InternalRow]
     with Logging {
   private val readerType: String = options.readerType
@@ -561,14 +609,33 @@ class MilvusBinlogPartitionReader(
   private var currentIndex: Int = 0
 
   override def next(): Boolean = {
-    readerType match {
-      case Constants.LogReaderTypeInsert => readInsertEvent()
-      case Constants.LogReaderTypeDelete => readDeleteEvent()
-      case _ =>
-        throw new IllegalArgumentException(
-          s"Unsupported reader type: $readerType"
-        )
-    }
+    var hasNext = false
+    do {
+      hasNext = readerType match {
+        case Constants.LogReaderTypeInsert => readInsertEvent()
+        case Constants.LogReaderTypeDelete => readDeleteEvent()
+        case _ =>
+          throw new IllegalArgumentException(
+            s"Unsupported reader type: $readerType"
+          )
+      }
+
+      // If we have a next record, check if it passes the filters
+      if (hasNext) {
+        val row = readerType match {
+          case Constants.LogReaderTypeInsert => getInsertInternalRow()
+          case Constants.LogReaderTypeDelete => getDeleteInternalRow()
+          case _                             => null
+        }
+
+        if (row != null && applyFilters(row)) {
+          return true // Found a row that passes the filters
+        }
+        // If the row doesn't pass the filters, continue to the next iteration
+      }
+    } while (hasNext)
+
+    false // No more rows or no rows that pass the filters
   }
 
   private def getFinalRow(
@@ -675,6 +742,117 @@ class MilvusBinlogPartitionReader(
           s"Error parsing line: $currentIndex in file $filePath. Error: ${e.getMessage}"
         )
         InternalRow.empty // Or re-throw exception based on desired error handling
+    }
+  }
+
+  private def applyFilters(row: InternalRow): Boolean = {
+    import org.apache.spark.sql.sources._
+    import org.apache.spark.unsafe.types.UTF8String
+
+    if (pushedFilters.isEmpty) {
+      return true
+    }
+
+    pushedFilters.forall(filter => evaluateFilter(filter, row))
+  }
+
+  private def evaluateFilter(filter: Filter, row: InternalRow): Boolean = {
+    import org.apache.spark.sql.sources._
+    import org.apache.spark.unsafe.types.UTF8String
+
+    filter match {
+      case EqualTo(attr, value) =>
+        val columnIndex = getColumnIndex(attr)
+        if (columnIndex == -1) return true
+        val rowValue = getRowValue(row, columnIndex, attr)
+        rowValue == value
+
+      case GreaterThan(attr, value) =>
+        val columnIndex = getColumnIndex(attr)
+        if (columnIndex == -1) return true
+        val rowValue = getRowValue(row, columnIndex, attr)
+        compareValues(rowValue, value) > 0
+
+      case GreaterThanOrEqual(attr, value) =>
+        val columnIndex = getColumnIndex(attr)
+        if (columnIndex == -1) return true
+        val rowValue = getRowValue(row, columnIndex, attr)
+        compareValues(rowValue, value) >= 0
+
+      case LessThan(attr, value) =>
+        val columnIndex = getColumnIndex(attr)
+        if (columnIndex == -1) return true
+        val rowValue = getRowValue(row, columnIndex, attr)
+        compareValues(rowValue, value) < 0
+
+      case LessThanOrEqual(attr, value) =>
+        val columnIndex = getColumnIndex(attr)
+        if (columnIndex == -1) return true
+        val rowValue = getRowValue(row, columnIndex, attr)
+        compareValues(rowValue, value) <= 0
+
+      case In(attr, values) =>
+        val columnIndex = getColumnIndex(attr)
+        if (columnIndex == -1) return true
+        val rowValue = getRowValue(row, columnIndex, attr)
+        values.contains(rowValue)
+
+      case IsNull(attr) =>
+        val columnIndex = getColumnIndex(attr)
+        if (columnIndex == -1) return true
+        row.isNullAt(columnIndex)
+
+      case IsNotNull(attr) =>
+        val columnIndex = getColumnIndex(attr)
+        if (columnIndex == -1) return true
+        !row.isNullAt(columnIndex)
+
+      case And(left, right) =>
+        evaluateFilter(left, row) && evaluateFilter(right, row)
+
+      case Or(left, right) =>
+        evaluateFilter(left, row) || evaluateFilter(right, row)
+
+      case _ => true // Unsupported filter, don't filter out
+    }
+  }
+
+  private def getColumnIndex(columnName: String): Int = {
+    schema.fieldIndex(columnName)
+  }
+
+  private def getRowValue(
+      row: InternalRow,
+      columnIndex: Int,
+      columnName: String
+  ): Any = {
+    if (row.isNullAt(columnIndex)) {
+      return null
+    }
+
+    columnName match {
+      case "data" =>
+        // data column can be string or long
+        schema.fields(columnIndex).dataType match {
+          case LongType   => row.getLong(columnIndex)
+          case StringType => row.getUTF8String(columnIndex).toString
+          case _ => row.get(columnIndex, schema.fields(columnIndex).dataType)
+        }
+      case "timestamp" =>
+        row.getLong(columnIndex)
+      case _ =>
+        row.get(columnIndex, schema.fields(columnIndex).dataType)
+    }
+  }
+
+  private def compareValues(rowValue: Any, filterValue: Any): Int = {
+    (rowValue, filterValue) match {
+      case (rv: Long, fv: Long)     => rv.compareTo(fv)
+      case (rv: Long, fv: Int)      => rv.compareTo(fv.toLong)
+      case (rv: String, fv: String) => rv.compareTo(fv)
+      case (rv: Long, fv: String)   => rv.toString.compareTo(fv)
+      case (rv: String, fv: Long)   => rv.compareTo(fv.toString)
+      case _ => 0 // Default to equal if types don't match
     }
   }
 

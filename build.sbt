@@ -49,7 +49,7 @@ ThisBuild / developers := List(
 lazy val root = (project in file("."))
   .settings(
     name := "spark-connector",
-    version := "0.1.3-SNAPSHOT",
+    version := "0.1.4-SNAPSHOT",
     organization := "com.zilliz",
     libraryDependencies ++= Seq(
       munit % Test,
