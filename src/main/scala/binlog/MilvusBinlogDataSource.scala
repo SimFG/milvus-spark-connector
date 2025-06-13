@@ -2,9 +2,10 @@ package com.zilliz.spark.connector.binlog
 
 import java.io.{BufferedReader, InputStreamReader}
 import java.io.FileNotFoundException
+import java.io.InputStream
 import java.net.URI
 import java.util.{Collections, HashMap, Map => JMap}
-import scala.collection.mutable.ArrayBuffer
+import scala.collection.mutable.{ArrayBuffer, HashMap => SHashMap}
 import scala.collection.JavaConverters._
 
 import org.apache.hadoop.conf.Configuration
@@ -391,7 +392,7 @@ class MilvusBinlogScan(
 
   override def planInputPartitions(): Array[InputPartition] = {
     var path = readerOptions.getFilePath(pathOption)
-    var fileStatuses = Seq[FileStatus]()
+    var fileStatuses = new SHashMap[String, Seq[FileStatus]]()
     val fs = readerOptions.getFileSystem(path)
 
     val collection = milvusOption.collectionID
@@ -411,16 +412,19 @@ class MilvusBinlogScan(
       }
 
       if (!partition.isEmpty && !segment.isEmpty) { // full path
-        fileStatuses = getBinlogStatuses(fs, client, path)
+        fileStatuses.put(segment, getBinlogStatuses(fs, client, path))
       } else if (!partition.isEmpty) { // leak segment path
         val segmentStatuses = getPartitionOrSegmentStatuses(fs, path)
         segmentStatuses
           .filter(status => validSegments.contains(status.getPath().getName))
           .foreach(status => {
-            fileStatuses = fileStatuses ++ getBinlogStatuses(
-              fs,
-              client,
-              status.getPath()
+            fileStatuses.put(
+              status.getPath().getName(),
+              getBinlogStatuses(
+                fs,
+                client,
+                status.getPath()
+              )
             )
           })
       } else { // leak partition path
@@ -431,31 +435,39 @@ class MilvusBinlogScan(
         segmentStatuses
           .filter(status => validSegments.contains(status.getPath().getName))
           .foreach(status => {
-            fileStatuses = fileStatuses ++ getBinlogStatuses(
-              fs,
-              client,
-              status.getPath()
+            fileStatuses.put(
+              status.getPath().getName(),
+              getBinlogStatuses(
+                fs,
+                client,
+                status.getPath()
+              )
             )
           })
       }
 
       client.close()
     } else {
-      fileStatuses = if (fs.getFileStatus(path).isDirectory) {
-        fs.listStatus(path)
-          .filterNot(_.getPath.getName.startsWith("_"))
-          .filterNot(_.getPath.getName.startsWith(".")) // Ignore hidden files
-      } else {
-        Array(fs.getFileStatus(path))
-      }
+      fileStatuses.put(
+        path.getName,
+        if (fs.getFileStatus(path).isDirectory) {
+          fs.listStatus(path)
+            .filterNot(_.getPath.getName.startsWith("_"))
+            .filterNot(_.getPath.getName.startsWith(".")) // Ignore hidden files
+        } else {
+          Array(fs.getFileStatus(path))
+        }
+      )
     }
     logInfo(
-      s"all file statuses: ${fileStatuses.map(_.getPath.toString).mkString(", ")}"
+      s"all file statuses: ${fileStatuses.values.flatten.map(_.getPath.toString).mkString(", ")}"
     )
 
-    val result = fileStatuses
-      .map(status =>
-        MilvusBinlogInputPartition(status.getPath.toString): InputPartition
+    val result = fileStatuses.values
+      .map(statuses =>
+        MilvusBinlogInputPartition(
+          statuses.map(_.getPath.toString).toArray
+        ): InputPartition
       )
       .toArray
     fs.close()
@@ -467,7 +479,8 @@ class MilvusBinlogScan(
   }
 }
 
-case class MilvusBinlogInputPartition(filePath: String) extends InputPartition
+case class MilvusBinlogInputPartition(filePaths: Array[String])
+    extends InputPartition
 
 case class MilvusBinlogReaderOption(
     readerType: String,
@@ -573,10 +586,10 @@ class MilvusBinlogPartitionReaderFactory(
   override def createReader(
       partition: InputPartition
   ): PartitionReader[InternalRow] = {
-    val filePath = partition.asInstanceOf[MilvusBinlogInputPartition].filePath
+    val filePaths = partition.asInstanceOf[MilvusBinlogInputPartition].filePaths
     new MilvusBinlogPartitionReader(
       schema,
-      filePath,
+      filePaths,
       readerOptions,
       pushedFilters
     )
@@ -586,23 +599,43 @@ class MilvusBinlogPartitionReaderFactory(
 // 6. PartitionReader
 class MilvusBinlogPartitionReader(
     schema: StructType,
-    filePath: String,
+    filePaths: Array[String],
     options: MilvusBinlogReaderOption,
     pushedFilters: Array[Filter]
 ) extends PartitionReader[InternalRow]
     with Logging {
   private val readerType: String = options.readerType
 
-  private val path = options.getFilePath(filePath)
+  private var fileIndex: Int = 0
+  private val path = options.getFilePath(filePaths(0))
   private val fs: FileSystem = options.getFileSystem(path)
-  private val inputStream = fs.open(path)
+  private var inputStream: InputStream = getNextInputStream()
 
   private val objectMapper = LogReader.getObjectMapper()
   private val descriptorEvent = LogReader.readDescriptorEvent(inputStream)
   private val dataType = descriptorEvent.data.payloadDataType
-  private var deleteEvent: DeleteEventData = null
-  private var insertEvent: InsertEventData = null
-  private var currentIndex: Int = 0
+  private var deleteEvent: DeleteEventData =
+    if (readerType == Constants.LogReaderTypeDelete) {
+      LogReader.readDeleteEvent(inputStream, objectMapper, dataType)
+    } else {
+      null
+    }
+  private var insertEvent: InsertEventData =
+    if (readerType == Constants.LogReaderTypeInsert) {
+      LogReader.readInsertEvent(inputStream, objectMapper, dataType)
+    } else {
+      null
+    }
+  private var currentIndex: Int = -1
+
+  private def getNextInputStream(): InputStream = {
+    if (inputStream != null) {
+      inputStream.close()
+    }
+    inputStream = fs.open(options.getFilePath(filePaths(fileIndex)))
+    fileIndex += 1
+    inputStream
+  }
 
   override def next(): Boolean = {
     var hasNext = false
@@ -673,7 +706,7 @@ class MilvusBinlogPartitionReader(
     }
     if (insertEvent == null) {
       insertEvent =
-        LogReader.readInsertEvent(inputStream, objectMapper, dataType)
+        LogReader.readInsertEvent(getNextInputStream(), objectMapper, dataType)
     } else {
       currentIndex += 1
     }
@@ -735,7 +768,7 @@ class MilvusBinlogPartitionReader(
     } catch {
       case e: Exception =>
         logError(
-          s"Error parsing line: $currentIndex in file $filePath. Error: ${e.getMessage}"
+          s"Error parsing line: $currentIndex in file ${filePaths(fileIndex)}. Error: ${e.getMessage}"
         )
         InternalRow.empty // Or re-throw exception based on desired error handling
     }

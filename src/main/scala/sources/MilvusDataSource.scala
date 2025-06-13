@@ -356,8 +356,6 @@ class MilvusScan(
   }
   private val fieldIDs =
     if (options.get(MilvusOption.ReaderFieldIDs) != null) {
-      // val optionIDs = options.get(MilvusOption.ReaderFieldIDs).split(",").toSeq
-      // optionIDs ++ Seq[String]("0", "1")
       options.get(MilvusOption.ReaderFieldIDs).split(",").toSeq
     } else {
       Seq[String]()
@@ -530,16 +528,17 @@ class MilvusScan(
       validSegments = getValidSegments(client)
     }
 
-    var fieldMaps = Seq[Map[String, String]]()
+    var fieldMaps = mutable.Map[String, Seq[Map[String, String]]]()
     if (rawPath.isEmpty) {
       if (!partition.isEmpty() && !segment.isEmpty()) {
-        fieldMaps ++= getSegmentFieldMap(fs, client, rootPath)
+        fieldMaps(segment) = getSegmentFieldMap(fs, client, rootPath)
       } else if (!partition.isEmpty()) {
         var segmentStatuses = getCollectionOrPartitionStatuses(fs, rootPath)
         segmentStatuses
           .filter(status => validSegments.contains(status.getPath().getName))
           .foreach(status => {
-            fieldMaps ++= getSegmentFieldMap(fs, client, status.getPath())
+            fieldMaps(status.getPath().getName) =
+              getSegmentFieldMap(fs, client, status.getPath())
           })
       } else {
         var partitionStatuses = getCollectionOrPartitionStatuses(fs, rootPath)
@@ -549,7 +548,7 @@ class MilvusScan(
           segmentStatuses
             .filter(status => validSegments.contains(status.getPath().getName))
             .foreach(status => {
-              fieldMaps ++= getSegmentFieldMap(
+              fieldMaps(status.getPath().getName) = getSegmentFieldMap(
                 fs,
                 client,
                 status.getPath()
@@ -558,15 +557,14 @@ class MilvusScan(
         })
       }
     } else {
-      fieldMaps ++= getSegmentFieldMap(fs, client, rootPath)
+      fieldMaps(rootPath.getName()) = getSegmentFieldMap(fs, client, rootPath)
     }
 
-    val result = fieldMaps
+    val result = fieldMaps.values
       .map(fieldMap => MilvusInputPartition(fieldMap): InputPartition)
       .toArray
     fs.close()
     client.close()
-    // TODO: simfg should segment partition
     result
   }
 
@@ -610,7 +608,7 @@ case class MilvusDataWriterFactory(
 
 case class MilvusCommitMessage(rowCount: Int) extends WriterCommitMessage
 
-case class MilvusInputPartition(fieldFiles: Map[String, String])
+case class MilvusInputPartition(fieldFiles: Seq[Map[String, String]])
     extends InputPartition
 
 class MilvusReaderFactory(

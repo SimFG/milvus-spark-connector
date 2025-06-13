@@ -31,13 +31,14 @@ import io.milvus.grpc.schema.{DataType => MilvusDataType}
 
 class MilvusPartitionReader(
     schema: StructType,
-    fieldFiles: Map[String, String],
+    fieldFilesSeq: Seq[Map[String, String]],
     options: MilvusBinlogReaderOption,
     pushedFilters: Array[Filter] = Array.empty[Filter]
 ) extends PartitionReader[InternalRow]
     with Logging {
   private val readerType: String = options.readerType
   private var fieldFileReaders: Map[String, FieldFileReader] = Map.empty
+  private var currentFieldFilesIndex: Int = 0
   open()
 
   // Helper trait/class to abstract reading a single field file
@@ -190,16 +191,30 @@ class MilvusPartitionReader(
   // Open all field files when the reader is initialized
   // Note: Spark calls open() when the reader is ready to start reading
   def open(): Unit = {
-    // logInfo(
-    //   s"MilvusDataReader opening files for partition: ${fieldFiles.values.mkString(", ")}"
-    // )
-    fieldFileReaders = fieldFiles.map { case (fieldName, filePath) =>
+    if (fieldFilesSeq.isEmpty) {
+      throw new IllegalStateException("No field files provided in the sequence")
+    }
+    openCurrentFieldFiles()
+    logInfo("All field file readers opened.")
+  }
+
+  private def openCurrentFieldFiles(): Unit = {
+    // Close existing readers if any
+    close()
+
+    val currentFieldFiles = fieldFilesSeq(currentFieldFilesIndex)
+    fieldFileReaders = currentFieldFiles.map { case (fieldName, filePath) =>
       // Create a FieldFileReader for each field's file
       val reader = new MilvusBinlogFieldFileReader(filePath, options)
       reader.open() // Open the individual file reader
       fieldName -> reader
     }
-    logInfo("All field file readers opened.")
+    if (
+      fieldFileReaders.isEmpty && currentFieldFilesIndex < fieldFilesSeq.length - 1
+    ) {
+      currentFieldFilesIndex += 1
+      openCurrentFieldFiles()
+    }
   }
 
   // Check if there is a next row by checking if all field readers have a next record
@@ -238,6 +253,13 @@ class MilvusPartitionReader(
         // If the row doesn't pass the filters, move to next record and continue
         fieldFileReaders.values.foreach { reader =>
           reader.moveToNextRecord()
+        }
+      } else {
+        // If no more records in current field files, try next set if available
+        if (currentFieldFilesIndex < fieldFilesSeq.length - 1) {
+          currentFieldFilesIndex += 1
+          openCurrentFieldFiles()
+          return next() // Recursively try with next set of field files
         }
       }
     } while (hasNext)
@@ -279,7 +301,7 @@ class MilvusPartitionReader(
           } catch {
             case e: Exception =>
               logError(
-                s"Error reading record for field '$fieldID' from file ${fieldFiles
+                s"Error reading record for field '$fieldID' from file ${fieldFilesSeq(currentFieldFilesIndex)
                     .getOrElse(fieldID.toString, "N/A")}",
                 e
               )
@@ -420,7 +442,7 @@ class MilvusPartitionReader(
           } catch {
             case e: Exception =>
               logError(
-                s"Error reading record for field '$fieldID' from file ${fieldFiles
+                s"Error reading record for field '$fieldID' from file ${fieldFilesSeq(currentFieldFilesIndex)
                     .getOrElse(fieldID.toString, "N/A")}",
                 e
               )

@@ -54,7 +54,8 @@ object MilvusDataReader {
       "left_anti"
     )
 
-    finalInsertDFWindow
+    val columnsToDrop = Seq("row_id", "timestamp")
+    finalInsertDFWindow.drop(columnsToDrop: _*)
   }
 }
 
