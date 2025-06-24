@@ -49,7 +49,7 @@ ThisBuild / developers := List(
 lazy val root = (project in file("."))
   .settings(
     name := "spark-connector",
-    version := "0.1.4-SNAPSHOT",
+    version := "0.1.5-SNAPSHOT",
     organization := "com.zilliz",
     libraryDependencies ++= Seq(
       munit % Test,
@@ -82,7 +82,8 @@ lazy val root = (project in file("."))
       (base ** "*.scala").get.map { file =>
         file -> s"generated_protobuf/${file.relativeTo(base).getOrElse(file)}"
       }
-    }
+    },
+    Compile / resourceDirectories += baseDirectory.value / "src" / "main" / "resources"
   )
 
 assemblyShadeRules in assembly := Seq(
@@ -91,6 +92,7 @@ assemblyShadeRules in assembly := Seq(
 )
 
 assembly / assemblyMergeStrategy := {
+  case PathList("native", xs @ _*) => MergeStrategy.first
   // Handle all Netty native-image files
   case PathList("META-INF", "native-image", "io.netty", _*) =>
     MergeStrategy.discard
