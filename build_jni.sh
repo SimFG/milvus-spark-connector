@@ -124,6 +124,10 @@ fi
 
 echo "Generated header file: $JNI_HEADER_DIR/com_zilliz_spark_connector_jni_NativeLib.h"
 
+# Copy header file to src directory for development convenience
+cp "$JNI_HEADER_DIR/com_zilliz_spark_connector_jni_NativeLib.h" "$JNI_SRC_DIR/"
+echo "Copied header file to source directory for development: $JNI_SRC_DIR/com_zilliz_spark_connector_jni_NativeLib.h"
+
 # Compile C++ code to shared library
 echo "Compiling C++ code to shared library..."
 
@@ -138,6 +142,7 @@ if [ -f "$JNI_SRC_DIR/mylibrary.cpp" ]; then
         -I"$JAVA_HOME/include" \
         -I"$JAVA_HOME/include/linux" \
         -I"$JNI_HEADER_DIR" \
+        -I"$JNI_SRC_DIR" \
         -o "$JNI_BUILD_DIR/libmylibrary.so" \
         "$JNI_SRC_DIR/mylibrary.cpp"
 elif [ -f "$JNI_SRC_DIR/mylibrary.c" ]; then
@@ -148,6 +153,7 @@ elif [ -f "$JNI_SRC_DIR/mylibrary.c" ]; then
         -I"$JAVA_HOME/include" \
         -I"$JAVA_HOME/include/linux" \
         -I"$JNI_HEADER_DIR" \
+        -I"$JNI_SRC_DIR" \
         -o "$JNI_BUILD_DIR/libmylibrary.so" \
         "$JNI_SRC_DIR/mylibrary.c"
 else
