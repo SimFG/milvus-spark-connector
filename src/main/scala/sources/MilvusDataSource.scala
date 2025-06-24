@@ -122,6 +122,7 @@ case class MilvusTable(
     with SupportsRead
     with Logging {
   var milvusCollection: MilvusCollectionInfo = _
+  var partitionID: Long = 0L
   initInfo()
   var fieldIDs =
     if (milvusOption.fieldIDs.nonEmpty) {
@@ -143,6 +144,19 @@ case class MilvusTable(
             s"Collection ${milvusOption.collectionName} not found"
           )
         )
+      if (milvusOption.partitionName.nonEmpty) {
+        partitionID = client
+          .getPartitionID(
+            milvusOption.databaseName,
+            milvusOption.collectionName,
+            milvusOption.partitionName
+          )
+          .getOrElse(
+            throw new Exception(
+              s"Partition ${milvusOption.partitionName} not found"
+            )
+          )
+      }
     } finally {
       client.close()
     }
@@ -162,6 +176,12 @@ case class MilvusTable(
       mergedOptions.put(
         MilvusOption.MilvusCollectionID,
         milvusCollection.collectionID.toString
+      )
+    }
+    if (partitionID != 0L) {
+      mergedOptions.put(
+        MilvusOption.MilvusPartitionID,
+        partitionID.toString
       )
     }
 

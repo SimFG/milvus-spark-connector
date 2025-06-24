@@ -111,6 +111,7 @@ class MilvusBinlogTable(
     with SupportsRead {
   val milvusOption = MilvusOption(new CaseInsensitiveStringMap(properties))
   var milvusCollection: MilvusCollectionInfo = _
+  var partitionID: Long = 0L
   initInfo()
   var milvusPKType: String = ""
 
@@ -130,6 +131,19 @@ class MilvusBinlogTable(
             s"Collection ${milvusOption.collectionName} not found"
           )
         )
+      if (milvusOption.partitionName.nonEmpty) {
+        partitionID = client
+          .getPartitionID(
+            milvusOption.databaseName,
+            milvusOption.collectionName,
+            milvusOption.partitionName
+          )
+          .getOrElse(
+            throw new Exception(
+              s"Partition ${milvusOption.partitionName} not found"
+            )
+          )
+      }
     } finally {
       client.close()
     }
@@ -187,6 +201,12 @@ class MilvusBinlogTable(
       mergedOptions.put(
         MilvusOption.MilvusCollectionID,
         milvusCollection.collectionID.toString
+      )
+    }
+    if (partitionID != 0L) {
+      mergedOptions.put(
+        MilvusOption.MilvusPartitionID,
+        partitionID.toString
       )
     }
     mergedOptions.put(

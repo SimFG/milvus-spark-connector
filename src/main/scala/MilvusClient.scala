@@ -33,12 +33,13 @@ import io.milvus.grpc.milvus.{
   CreateDatabaseRequest,
   DeleteRequest,
   DescribeCollectionRequest,
+  DescribeCollectionResponse,
   GetPersistentSegmentInfoRequest,
   InsertRequest,
   MilvusServiceGrpc,
-  MutationResult
+  MutationResult,
+  ShowPartitionsRequest
 }
-import io.milvus.grpc.milvus.DescribeCollectionResponse
 import io.milvus.grpc.schema.{
   CollectionSchema,
   DataType,
@@ -584,6 +585,36 @@ class MilvusClient(params: MilvusConnectionParams) {
       case e: Exception =>
         Failure(
           new Exception(s"Failed to get segment info: ${e.getMessage}")
+        )
+    }
+  }
+
+  def getPartitionID(
+      dbName: String,
+      collectionName: String,
+      partitionName: String
+  ): Try[Long] = {
+    try {
+      val partitionInfos = stub.showPartitions(
+        ShowPartitionsRequest(
+          dbName = dbName,
+          collectionName = collectionName
+        )
+      )
+      Success(
+        partitionInfos.partitionNames.zipWithIndex
+          .find(_._1 == partitionName)
+          .map(pair => partitionInfos.partitionIDs(pair._2))
+          .getOrElse(
+            throw new Exception(
+              s"Partition $partitionName not found in collection $collectionName"
+            )
+          )
+      )
+    } catch {
+      case e: Exception =>
+        Failure(
+          new Exception(s"Failed to get partition ID: ${e.getMessage}")
         )
     }
   }
