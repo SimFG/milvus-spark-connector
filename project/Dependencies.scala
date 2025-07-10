@@ -12,8 +12,11 @@ object Dependencies {
   lazy val jacksonVersion = "2.17.3"
 
   lazy val munit = "org.scalameta" %% "munit" % "0.7.29"
+  lazy val scalaTest = "org.scalatest" %% "scalatest" % "3.2.15"
   lazy val grpcNetty =
-    "io.grpc" % "grpc-netty-shaded" % grpcJavaVersion
+    "io.grpc" % "grpc-netty-shaded" % grpcJavaVersion excludeAll ExclusionRule(
+      organization = "org.slf4j"
+    )
   lazy val scalapbRuntime =
     "com.thesamet.scalapb" %% "scalapb-runtime" % scalapbVersion
   lazy val scalapbRuntimeGrpc =
@@ -28,18 +31,14 @@ object Dependencies {
     "org.apache.spark" %% "spark-catalyst" % sparkVersion % "provided,test"
   lazy val sparkMLlib =
     "org.apache.spark" %% "spark-mllib" % sparkVersion % "provided,test"
-  lazy val parquetCommon =
-    "org.apache.parquet" % "parquet-common" % parquetVersion
-  lazy val parquetColumn =
-    "org.apache.parquet" % "parquet-column" % parquetVersion
   lazy val parquetHadoop =
     "org.apache.parquet" % "parquet-hadoop" % parquetVersion
   lazy val hadoopCommon =
-    "org.apache.hadoop" % "hadoop-common" % hadoopVersion exclude ("javax.activation", "activation")
+    "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided,test" exclude ("javax.activation", "activation")
   lazy val hadoopAws =
     "org.apache.hadoop" % "hadoop-aws" % hadoopVersion
   lazy val awsSdkS3 =
-    "software.amazon.awssdk" % "s3" % "2.30.38"
+    "software.amazon.awssdk" % "s3" % "2.30.38" // doc: https://javadoc.io/doc/software.amazon.awssdk/s3/2.30.38/index.html
   lazy val jacksonScala =
     "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVersion
   lazy val jacksonDatabind =

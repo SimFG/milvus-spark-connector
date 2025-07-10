@@ -1,3 +1,5 @@
+import scala.sys.process.Process
+
 import xerial.sbt.Sonatype._
 import Dependencies._
 
@@ -53,6 +55,7 @@ lazy val root = (project in file("."))
     organization := "com.zilliz",
     libraryDependencies ++= Seq(
       munit % Test,
+      scalaTest % Test,
       grpcNetty,
       scalapbRuntime % "protobuf",
       scalapbRuntimeGrpc,
@@ -61,8 +64,6 @@ lazy val root = (project in file("."))
       sparkSql,
       sparkCatalyst,
       sparkMLlib,
-      parquetCommon,
-      parquetColumn,
       parquetHadoop,
       hadoopCommon,
       hadoopAws,
@@ -86,7 +87,7 @@ lazy val root = (project in file("."))
     Compile / resourceDirectories += baseDirectory.value / "src" / "main" / "resources"
   )
 
-assemblyShadeRules in assembly := Seq(
+assembly / assemblyShadeRules := Seq(
   ShadeRule.rename("com.google.protobuf.**" -> "shade_proto.@1").inAll,
   ShadeRule.rename("com.google.common.**" -> "shade_googlecommon.@1").inAll
 )
