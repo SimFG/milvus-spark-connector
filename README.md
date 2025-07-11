@@ -117,4 +117,4 @@ This command executes the **HelloDemo** class, showcasing how to read collection
 * A collection named **hello_spark_milvus** already exists in your local Milvus instance.
 * Your local Milvus service is running and accessible.
 
-For more detailed information about how to use the connector, see the [ **api reference**](docs/reference-en.md).
+For more detailed information about how to use the connector, see the [ **API REFERENCE**](docs/reference-en.md).
