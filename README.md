@@ -59,7 +59,7 @@ You can use the pre-built Milvus Spark Connector package directly, or compile it
 **Note:** The official release package is currently used primarily for testing the release process. Active development and updates are concentrated in the SNAPSHOT versions.
 
 - **Official Release:** Available at [Maven Repository](https://mvnrepository.com/artifact/com.zilliz/spark-connector_2.13)
-- **Latest SNAPSHOT:** Version 0.1.2-SNAPSHOT
+- **Latest SNAPSHOT:** Version 0.1.7-SNAPSHOT
 
 #### Using SNAPSHOT Dependencies
 
@@ -107,7 +107,14 @@ To execute the test demo, specify the paths to the JAR files generated in the pr
 **Note:** If you prefer to use online dependencies instead of building locally, you can download the pre-built assembly JAR from the [GitHub Releases page](https://github.com/SimFG/milvus-spark-connector/releases).
 
 ```bash
-spark-submit-wrapper --jars /xxx/spark-connector-assembly-0.1.0-SNAPSHOT.jar --class "example.FloatInsertDemo" /xxx/milvus-spark-connector-example_2.13-0.1.0-SNAPSHOT.jar
+spark-submit-wrapper --jars /xxx/spark-connector-assembly-x.x.x-SNAPSHOT.jar --class "example.HelloDemo" /xxx/milvus-spark-connector-example_2.13-0.1.0-SNAPSHOT.jar
 ```
 
-This command runs the `FloatInsertDemo` class, which demonstrates how to insert data into Milvus using the Spark connector. Ensure that the paths to the JAR files are correct before running the command.
+This command executes the **HelloDemo** class, showcasing how to read collection data from Milvus using the Spark connector.
+
+**Before running this command, please ensure the following:**
+
+* A collection named **hello_spark_milvus** already exists in your local Milvus instance.
+* Your local Milvus service is running and accessible.
+
+For more detailed information about how to use the connector, see the [ **api reference**](docs/reference-en.md).

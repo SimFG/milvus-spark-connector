@@ -13,6 +13,13 @@ object MilvusDataReader {
     val insertDF = spark.read
       .format("milvus")
       .options(config.options)
+      .option(
+        MilvusOption.S3FileSystemTypeName,
+        config.options.getOrElse(
+          MilvusOption.S3FileSystemTypeName,
+          "s3a://"
+        )
+      )
       .option(MilvusOption.ReaderType, "insert")
       .option(MilvusOption.MilvusUri, config.uri)
       .option(MilvusOption.MilvusToken, config.token)
