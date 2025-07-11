@@ -4,7 +4,7 @@
 
 To ensure smooth operation, it is critical to use consistent versions of the required tools. Mismatched versions may lead to compatibility issues.
 
-1. **SDKMAN** is recommended for managing Scala and Spark environments.
+1. [**SDKMAN**](https://sdkman.io/) is recommended for managing Scala and Spark environments.
 2. **Java Version:** 17.0
 3. **Scala Version:** 2.13.8
 4. **Spark Version:** 3.5.3 (built with Scala 2.13)
