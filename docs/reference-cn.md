@@ -138,7 +138,7 @@ val s3Options = Map(
 | `MilvusOption.MilvusCollectionID` | String | 否 | "" | 集合 ID，通常自动获取 |
 | `MilvusOption.MilvusPartitionID` | String | 否 | "" | 分区 ID，通常自动获取 |
 | `MilvusOption.MilvusSegmentID` | String | 否 | "" | 段 ID，用于精确读取特定段 |
-| `MilvusOption.MilvusFieldID` | String | 否 | "" | 字段 ID，用于读取特定字段 |
+| `MilvusOption.ReaderFieldIDs` | String | No | "" | 字段ID列表，逗号分隔，用于只读取部分字段，可以有效减少数据获取时间 |
 
 ### 2.4 写入参数
 
@@ -157,7 +157,6 @@ val s3Options = Map(
 |--------|------|------|--------|------|
 | `MilvusOption.ReaderType` | String | 是 | - | 读取器类型，支持 "insert" 或 "delete" |
 | `MilvusOption.ReaderPath` | String | 条件必需 | - | 二进制日志文件路径，当不使用 S3 时必需 |
-| `MilvusOption.ReaderFieldIDs` | String | 否 | "" | 字段 ID 列表，逗号分隔 |
 
 ### 3.2 Milvus 连接参数（用于元数据获取）
 
@@ -172,7 +171,6 @@ val s3Options = Map(
 | `MilvusOption.MilvusPartitionID` | String | 否 | "" | 分区 ID |
 | `MilvusOption.MilvusSegmentID` | String | 否 | "" | 段 ID |
 | `MilvusOption.MilvusFieldID` | String | 否 | "" | 字段 ID，对于 insert 类型必需 |
-| `MilvusOption.MilvusCollectionPkType` | String | 否 | "" | 主键类型，默认情况下binlog数据读取出来均为字符串，如果int64类型 |
 
 ### 3.3 S3 存储参数
 

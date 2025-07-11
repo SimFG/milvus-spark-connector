@@ -136,7 +136,7 @@ This approach is particularly suitable for scenarios where you need to obtain th
 | `MilvusOption.MilvusCollectionID` | String | No | "" | Collection ID, usually auto-retrieved |
 | `MilvusOption.MilvusPartitionID` | String | No | "" | Partition ID, usually auto-retrieved |
 | `MilvusOption.MilvusSegmentID` | String | No | "" | Segment ID, for reading specific segments |
-| `MilvusOption.MilvusFieldID` | String | No | "" | Field ID, for reading specific fields |
+| `MilvusOption.ReaderFieldIDs` | String | No | "" | Comma-separated field ID list, for reading specific fields |
 
 ### 2.4 Write Parameters
 
@@ -146,8 +146,6 @@ This approach is particularly suitable for scenarios where you need to obtain th
 | `MilvusOption.MilvusRetryCount` | Int | No | 3 | Number of retries on operation failure |
 | `MilvusOption.MilvusRetryInterval` | Int | No | 1000 | Retry interval in milliseconds |
 
-
-
 ## 3. `milvusbinlog` Format Parameters
 
 ### 3.1 Basic Parameters
@@ -156,7 +154,6 @@ This approach is particularly suitable for scenarios where you need to obtain th
 |-----------|------|----------|---------|-------------|
 | `MilvusOption.ReaderType` | String | Yes | - | Reader type, supports "insert" or "delete" |
 | `MilvusOption.ReaderPath` | String | Conditional | - | Binary log file path, required when not using S3 |
-| `MilvusOption.ReaderFieldIDs` | String | No | "" | Comma-separated field ID list |
 
 ### 3.2 Milvus Connection Parameters (for metadata retrieval)
 
