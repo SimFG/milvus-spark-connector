@@ -7,7 +7,7 @@
 Milvus Spark Connector 提供了两种数据源格式：
 
 1. **`milvus`** - 用于 Milvus 数据的读写操作
-2. **`milvusbinlog`** - 用于读取 Milvus 二进制日志文件（只读）
+2. **`milvusbinlog`** - 用于读取 Milvus collection中的单个field二进制日志文件（只读）
 
 此外，还提供了一个便捷的 `MilvusDataReader` 工具类，用于简化集合数据的读取操作。该工具类内部会自动处理插入和删除日志的合并，返回最终的有效数据。
 

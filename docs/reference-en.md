@@ -7,7 +7,7 @@ This document provides a comprehensive guide to all parameter configurations for
 Milvus Spark Connector provides two data source formats:
 
 1. **`milvus`** - For reading and writing Milvus data
-2. **`milvusbinlog`** - For reading Milvus binary log files (read-only)
+2. **`milvusbinlog`** - For reading a single field binary log file in a Milvus collection (read-only)
 
 Additionally, a convenient `MilvusDataReader` utility class is provided to simplify collection data reading operations. This utility automatically handles the merging of insert and delete logs, returning the final valid data.
 
