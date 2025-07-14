@@ -2,6 +2,8 @@
 
 ## Environment Preparation
 
+**Machine Requirements:** Minimum 2 CPU cores and 8GB RAM.
+
 To ensure smooth operation, it is critical to use consistent versions of the required tools. Mismatched versions may lead to compatibility issues.
 
 1. [**SDKMAN**](https://sdkman.io/) is recommended for managing Scala and Spark environments.
@@ -117,4 +119,8 @@ This command executes the **HelloDemo** class, showcasing how to read collection
 * A collection named **hello_spark_milvus** already exists in your local Milvus instance.
 * Your local Milvus service is running and accessible.
 
-For more detailed information about how to use the connector, see the [ **API REFERENCE**](docs/reference-en.md).
+For more detailed information about how to use the connector, see the [ **API Reference**](docs/reference-en.md).
+
+## License
+
+This project is licensed under the Server Side Public License v1 (SSPLv1) and the GNU Affero General Public License v3 (AGPLv3).
