@@ -30,7 +30,7 @@ import io.milvus.grpc.schema.{
   FieldSchema
 }
 
-case class MilvusDataWriter(
+case class MilvusInsertDataWriter(
     partitionId: Int,
     taskId: Long,
     milvusOption: MilvusOption,
@@ -43,13 +43,13 @@ case class MilvusDataWriter(
     milvusOption.databaseName,
     milvusOption.collectionName
   )
-  private val fieldMap = MilvusDataWriter.getFieldMap(
+  private val fieldMap = MilvusInsertDataWriter.getFieldMap(
     collectionSchema.getOrElse(
       throw new MilvusRpcException("Collection schema not found")
     )
   )
   private val maxBatchSize = milvusOption.insertMaxBatchSize
-  private var dataBuffer = MilvusDataWriter.newDataBuffer(
+  private var dataBuffer = MilvusInsertDataWriter.newDataBuffer(
     collectionSchema.getOrElse(
       throw new MilvusRpcException("Collection schema not found")
     )
@@ -63,7 +63,7 @@ case class MilvusDataWriter(
       throw new MilvusRpcException("Flush buffer failed")
     }
     if (currentHandledBuffer.isEmpty) {
-      currentHandledBuffer = MilvusDataWriter.getInsertFieldsData(
+      currentHandledBuffer = MilvusInsertDataWriter.getInsertFieldsData(
         collectionSchema.get,
         dataBuffer
       )
@@ -96,7 +96,7 @@ case class MilvusDataWriter(
 
   override def write(record: InternalRow): Unit = {
     try {
-      MilvusDataWriter.addDataToBuffer(
+      MilvusInsertDataWriter.addDataToBuffer(
         dataBuffer,
         record,
         fieldMap,
@@ -133,7 +133,7 @@ case class MilvusDataWriter(
   }
 }
 
-object MilvusDataWriter {
+object MilvusInsertDataWriter {
   def newDataBuffer(
       schema: CollectionSchema
   ): Map[String, Any] = {

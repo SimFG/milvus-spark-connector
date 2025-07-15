@@ -5,6 +5,7 @@ import java.io.FileNotFoundException
 import java.util.{Collections, HashMap, Map => JMap}
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
+import scala.util.{Failure, Success, Try}
 
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 import org.apache.spark.internal.Logging
@@ -57,10 +58,14 @@ import org.apache.spark.sql.types.{
 }
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
-import com.zilliz.spark.connector.{DataTypeUtil, MilvusClient, MilvusOption}
-import com.zilliz.spark.connector.binlog.MilvusBinlogReaderOption
-import com.zilliz.spark.connector.MilvusCollectionInfo
-import com.zilliz.spark.connector.MilvusSegmentInfo
+import com.zilliz.spark.connector.{
+  DataTypeUtil,
+  MilvusClient,
+  MilvusCollectionInfo,
+  MilvusOption,
+  MilvusS3Option,
+  MilvusSegmentInfo
+}
 
 // 1. DataSourceRegister and TableProvider
 case class MilvusDataSource() extends TableProvider with DataSourceRegister {
@@ -367,7 +372,7 @@ class MilvusScan(
     with Batch
     with Logging {
   private val milvusOption = MilvusOption(options)
-  private val readerOption = MilvusBinlogReaderOption(options)
+  private val readerOption = MilvusS3Option(options)
   private val pathOption: String = getPathOption()
   if (pathOption == null) {
     throw new IllegalArgumentException(
@@ -622,7 +627,7 @@ case class MilvusDataWriterFactory(
       partitionId: Int,
       taskId: Long
   ): DataWriter[InternalRow] = {
-    MilvusDataWriter(partitionId, taskId, milvusOptions, schema)
+    MilvusInsertDataWriter(partitionId, taskId, milvusOptions, schema)
   }
 }
 
@@ -637,7 +642,7 @@ class MilvusReaderFactory(
     pushedFilters: Array[Filter] = Array.empty[Filter]
 ) extends PartitionReaderFactory {
 
-  private val readerOptions = MilvusBinlogReaderOption(options)
+  private val readerOptions = MilvusS3Option(options)
 
   override def createReader(
       partition: InputPartition

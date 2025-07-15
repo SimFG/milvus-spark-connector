@@ -1,7 +1,11 @@
 package com.zilliz.spark.connector
 
+import java.net.URI
 import scala.collection.Map
 
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
+import org.apache.hadoop.fs.s3a.S3AFileSystem
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 import com.zilliz.spark.connector.binlog.Constants
@@ -111,5 +115,86 @@ object MilvusOption {
 
   def isInt64PK(milvusPKType: String): Boolean = {
     milvusPKType.toLowerCase() == "int64"
+  }
+}
+
+case class MilvusS3Option(
+    readerType: String,
+    s3FileSystemType: String,
+    s3BucketName: String,
+    s3RootPath: String,
+    s3Endpoint: String,
+    s3AccessKey: String,
+    s3SecretKey: String,
+    s3UseSSL: Boolean,
+    s3PathStyleAccess: Boolean,
+    milvusPKType: String
+) extends Serializable {
+  def notEmpty(str: String): Boolean = str != null && str.trim.nonEmpty
+
+  def getConf(): Configuration = {
+    val conf = new Configuration()
+    if (notEmpty(s3FileSystemType)) {
+      // Basic S3 configuration
+      conf.set("fs.s3a.endpoint", s3Endpoint)
+      conf.set("fs.s3a.path.style.access", s3PathStyleAccess.toString)
+      conf.set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+      conf.set(
+        "fs.s3a.aws.credentials.provider",
+        "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider,com.amazonaws.auth.DefaultAWSCredentialsProviderChain"
+      )
+      conf.set("fs.s3a.access.key", s3AccessKey)
+      conf.set("fs.s3a.secret.key", s3SecretKey)
+      conf.set("fs.s3a.connection.ssl.enabled", s3UseSSL.toString)
+
+    }
+    conf
+  }
+
+  def getFileSystem(path: Path): FileSystem = {
+    if (notEmpty(s3FileSystemType)) {
+      val conf = getConf()
+      val fileSystem = new S3AFileSystem()
+      fileSystem.initialize(
+        new URI(
+          s"s3a://${s3BucketName}/"
+        ),
+        conf
+      )
+      fileSystem
+    } else {
+      val conf = getConf()
+      path.getFileSystem(conf)
+    }
+  }
+
+  def getFilePath(path: String): Path = {
+    if (notEmpty(s3FileSystemType)) {
+      if (path.startsWith("s3a://")) {
+        new Path(path)
+      } else {
+        val finalPath = s"s3a://${s3BucketName}/${s3RootPath}/${path}"
+        new Path(new URI(finalPath))
+      }
+    } else {
+      new Path(path)
+    }
+  }
+}
+
+object MilvusS3Option {
+  def apply(options: CaseInsensitiveStringMap): MilvusS3Option = {
+    new MilvusS3Option(
+      options.get(Constants.LogReaderTypeParamName),
+      options.get(Constants.S3FileSystemTypeName),
+      options.getOrDefault(Constants.S3BucketName, "a-bucket"),
+      options.getOrDefault(Constants.S3RootPath, "files"),
+      options.getOrDefault(Constants.S3Endpoint, "localhost:9000"),
+      options.getOrDefault(Constants.S3AccessKey, "minioadmin"),
+      options.getOrDefault(Constants.S3SecretKey, "minioadmin"),
+      options.getOrDefault(Constants.S3UseSSL, "false").toBoolean,
+      options.getOrDefault(Constants.S3PathStyleAccess, "true").toBoolean,
+      options.getOrDefault(MilvusOption.MilvusCollectionPKType, "")
+    )
   }
 }

@@ -38,7 +38,8 @@ import org.apache.spark.unsafe.types.UTF8String
 import com.zilliz.spark.connector.{
   MilvusClient,
   MilvusCollectionInfo,
-  MilvusOption
+  MilvusOption,
+  MilvusS3Option
 }
 import io.milvus.grpc.schema.DataType
 
@@ -278,7 +279,7 @@ class MilvusBinlogScan(
     with Batch
     with Logging {
   private val milvusOption = MilvusOption(options)
-  private val readerOptions = MilvusBinlogReaderOption(options)
+  private val readerOptions = MilvusS3Option(options)
   private val pathOption: String = getPathOption()
   if (pathOption == null) {
     throw new IllegalArgumentException(
@@ -502,98 +503,6 @@ class MilvusBinlogScan(
 case class MilvusBinlogInputPartition(filePaths: Array[String])
     extends InputPartition
 
-case class MilvusBinlogReaderOption(
-    readerType: String,
-    s3FileSystemType: String,
-    s3BucketName: String,
-    s3RootPath: String,
-    s3Endpoint: String,
-    s3AccessKey: String,
-    s3SecretKey: String,
-    s3UseSSL: Boolean,
-    s3PathStyleAccess: Boolean,
-    milvusPKType: String
-) extends Serializable
-    with Logging {
-  def notEmpty(str: String): Boolean = str != null && str.trim.nonEmpty
-
-  def getConf(): Configuration = {
-    val conf = new Configuration()
-    if (notEmpty(s3FileSystemType)) {
-      conf.set(
-        "fs.s3a.endpoint",
-        s3Endpoint
-      )
-      conf.set("fs.s3a.path.style.access", s3PathStyleAccess.toString)
-      conf.set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
-      conf.set(
-        "fs.s3a.aws.credentials.provider",
-        "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider,com.amazonaws.auth.DefaultAWSCredentialsProviderChain"
-      )
-      conf.set(
-        "fs.s3a.access.key",
-        s3AccessKey
-      )
-      conf.set(
-        "fs.s3a.secret.key",
-        s3SecretKey
-      )
-      conf.set(
-        "fs.s3a.connection.ssl.enabled",
-        s3UseSSL.toString
-      )
-    }
-    conf
-  }
-
-  def getFileSystem(path: Path): FileSystem = {
-    if (notEmpty(s3FileSystemType)) {
-      val conf = getConf()
-      val fileSystem = new S3AFileSystem()
-      fileSystem.initialize(
-        new URI(
-          s"s3a://${s3BucketName}/"
-        ),
-        conf
-      )
-      fileSystem
-    } else {
-      val conf = getConf()
-      path.getFileSystem(conf)
-    }
-  }
-
-  def getFilePath(path: String): Path = {
-    if (notEmpty(s3FileSystemType)) {
-      if (path.startsWith("s3a://")) {
-        new Path(path)
-      } else {
-        val finalPath = s"s3a://${s3BucketName}/${s3RootPath}/${path}"
-        new Path(new URI(finalPath))
-      }
-    } else {
-      new Path(path)
-    }
-  }
-}
-
-object MilvusBinlogReaderOption {
-  def apply(options: CaseInsensitiveStringMap): MilvusBinlogReaderOption = {
-    new MilvusBinlogReaderOption(
-      options.get(Constants.LogReaderTypeParamName),
-      options.get(Constants.S3FileSystemTypeName),
-      options.getOrDefault(Constants.S3BucketName, "a-bucket"),
-      options.getOrDefault(Constants.S3RootPath, "files"),
-      options.getOrDefault(Constants.S3Endpoint, "localhost:9000"),
-      options.getOrDefault(Constants.S3AccessKey, "minioadmin"),
-      options.getOrDefault(Constants.S3SecretKey, "minioadmin"),
-      options.getOrDefault(Constants.S3UseSSL, "false").toBoolean,
-      options.getOrDefault(Constants.S3PathStyleAccess, "true").toBoolean,
-      options.getOrDefault(MilvusOption.MilvusCollectionPKType, "")
-    )
-  }
-}
-
 // 5. PartitionReaderFactory
 class MilvusBinlogPartitionReaderFactory(
     schema: StructType,
@@ -601,7 +510,7 @@ class MilvusBinlogPartitionReaderFactory(
     pushedFilters: Array[Filter]
 ) extends PartitionReaderFactory {
 
-  private val readerOptions = MilvusBinlogReaderOption(options)
+  private val readerOptions = MilvusS3Option(options)
 
   override def createReader(
       partition: InputPartition
@@ -620,7 +529,7 @@ class MilvusBinlogPartitionReaderFactory(
 class MilvusBinlogPartitionReader(
     schema: StructType,
     filePaths: Array[String],
-    options: MilvusBinlogReaderOption,
+    options: MilvusS3Option,
     pushedFilters: Array[Filter]
 ) extends PartitionReader[InternalRow]
     with Logging {

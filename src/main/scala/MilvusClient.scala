@@ -34,7 +34,10 @@ import io.milvus.grpc.milvus.{
   DeleteRequest,
   DescribeCollectionRequest,
   DescribeCollectionResponse,
+  GetImportStateRequest,
+  GetImportStateResponse,
   GetPersistentSegmentInfoRequest,
+  ImportRequest,
   InsertRequest,
   MilvusServiceGrpc,
   MutationResult,
@@ -330,6 +333,78 @@ class MilvusClient(params: MilvusConnectionParams) {
       case e: Exception =>
         Failure(
           new Exception(s"Failed to insert data: ${e.getMessage}")
+        )
+    }
+  }
+
+  def importData(
+      dbName: String = "",
+      collectionName: String,
+      partitionName: Option[String] = None,
+      files: Seq[String] = Seq.empty,
+      options: Map[String, String] = Map.empty,
+      rowBased: Boolean = false
+  ): Try[Seq[Long]] = {
+    try {
+      val importResult = stub.`import`(
+        ImportRequest(
+          dbName = dbName,
+          collectionName = collectionName,
+          partitionName = partitionName.getOrElse(""),
+          files = files,
+          options = options
+            .map(kv => KeyValuePair(key = kv._1, value = kv._2))
+            .toSeq,
+          rowBased = rowBased
+        )
+      )
+      val status = importResult.status.getOrElse(
+        Status(
+          errorCode = ErrorCode.UnexpectedError,
+          reason = "Import Status is empty"
+        )
+      )
+      if (status.errorCode == ErrorCode.Success) {
+        Success(importResult.tasks.toSeq)
+      } else {
+        Failure(
+          new Exception(
+            s"Import failed with error code: ${status.errorCode}, reason: ${status.reason}"
+          )
+        )
+      }
+    } catch {
+      case e: Exception =>
+        Failure(
+          new Exception(s"Failed to import data: ${e.getMessage}")
+        )
+    }
+  }
+
+  def getImportState(taskId: Long): Try[GetImportStateResponse] = {
+    try {
+      val importStateResult = stub.getImportState(
+        GetImportStateRequest(task = taskId)
+      )
+      val status = importStateResult.status.getOrElse(
+        Status(
+          errorCode = ErrorCode.UnexpectedError,
+          reason = "GetImportState Status is empty"
+        )
+      )
+      if (status.errorCode == ErrorCode.Success) {
+        Success(importStateResult)
+      } else {
+        Failure(
+          new Exception(
+            s"Get import state failed with error code: ${status.errorCode}, reason: ${status.reason}"
+          )
+        )
+      }
+    } catch {
+      case e: Exception =>
+        Failure(
+          new Exception(s"Failed to get import state: ${e.getMessage}")
         )
     }
   }

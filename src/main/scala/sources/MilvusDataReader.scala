@@ -21,18 +21,18 @@ import org.apache.spark.unsafe.types.UTF8String
 import com.zilliz.spark.connector.binlog.{
   Constants,
   DeleteEventData,
+  DescriptorEvent,
   DescriptorEventData,
   InsertEventData,
-  LogReader,
-  MilvusBinlogReaderOption
+  LogReader
 }
-import com.zilliz.spark.connector.binlog.DescriptorEvent
+import com.zilliz.spark.connector.MilvusS3Option
 import io.milvus.grpc.schema.{DataType => MilvusDataType}
 
 class MilvusPartitionReader(
     schema: StructType,
     fieldFilesSeq: Seq[Map[String, String]],
-    options: MilvusBinlogReaderOption,
+    options: MilvusS3Option,
     pushedFilters: Array[Filter] = Array.empty[Filter]
 ) extends PartitionReader[InternalRow]
     with Logging {
@@ -55,7 +55,7 @@ class MilvusPartitionReader(
 
   private class MilvusBinlogFieldFileReader(
       filePath: String,
-      options: MilvusBinlogReaderOption
+      options: MilvusS3Option
   ) extends FieldFileReader
       with Logging {
     private val path = options.getFilePath(filePath)
