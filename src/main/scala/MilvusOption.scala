@@ -147,6 +147,14 @@ case class MilvusS3Option(
       conf.set("fs.s3a.secret.key", s3SecretKey)
       conf.set("fs.s3a.connection.ssl.enabled", s3UseSSL.toString)
 
+      // Performance optimization settings
+      conf.set("fs.s3a.block.size", "134217728") // 128MB
+      conf.set("fs.s3a.threads.max", "32")
+      conf.set("fs.s3a.threads.core", "16")
+      conf.set("fs.s3a.connection.maximum", "32")
+      conf.set("fs.s3a.connection.timeout", "30000")
+      conf.set("fs.s3a.socket.timeout", "30000")
+      conf.set("fs.s3a.retry.limit", "3")
     }
     conf
   }

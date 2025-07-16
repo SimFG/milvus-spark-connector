@@ -83,21 +83,29 @@ class MilvusSparkNativeImportWriter(
   private def configureSparkS3Settings(spark: SparkSession): Unit = {
     val conf = spark.sparkContext.hadoopConfiguration
 
+    // Basic S3 connection settings
     conf.set("fs.s3a.endpoint", s3Option.s3Endpoint)
     conf.set("fs.s3a.access.key", s3Option.s3AccessKey)
     conf.set("fs.s3a.secret.key", s3Option.s3SecretKey)
     conf.set("fs.s3a.path.style.access", s3Option.s3PathStyleAccess.toString)
     conf.set("fs.s3a.connection.ssl.enabled", s3Option.s3UseSSL.toString)
 
+    // Performance optimization settings
+    // Multipart upload size: 128MB (134217728 bytes) - larger parts reduce overhead for big files
     conf.set("fs.s3a.multipart.size", "134217728")
     conf.set("fs.s3a.connection.maximum", "32")
     conf.set("fs.s3a.connection.timeout", "30000")
     conf.set("fs.s3a.socket.timeout", "30000")
     conf.set("fs.s3a.retry.limit", "3")
+    // Fast upload mode: enabled - uses multiple threads and buffering for better performance
     conf.set("fs.s3a.fast.upload", "true")
+    // Maximum upload threads: 32 - parallel uploads for better throughput
     conf.set("fs.s3a.threads.max", "32")
+    // Core upload threads: 16 - minimum threads kept alive for consistent performance
     conf.set("fs.s3a.threads.core", "16")
+    // Upload buffer type: disk - uses local disk for buffering to avoid memory pressure
     conf.set("fs.s3a.fast.upload.buffer", "disk")
+    // Active upload blocks: 8 - number of concurrent multipart uploads per file
     conf.set("fs.s3a.fast.upload.active.blocks", "8")
 
     logInfo("Configured Spark S3 settings for optimal performance")
