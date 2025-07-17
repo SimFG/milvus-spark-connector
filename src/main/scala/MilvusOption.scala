@@ -128,7 +128,8 @@ case class MilvusS3Option(
     s3SecretKey: String,
     s3UseSSL: Boolean,
     s3PathStyleAccess: Boolean,
-    milvusPKType: String
+    milvusPKType: String,
+    s3MaxConnections: Int
 ) extends Serializable {
   def notEmpty(str: String): Boolean = str != null && str.trim.nonEmpty
 
@@ -149,9 +150,9 @@ case class MilvusS3Option(
 
       // Performance optimization settings
       conf.set("fs.s3a.block.size", "134217728") // 128MB
-      conf.set("fs.s3a.threads.max", "32")
-      conf.set("fs.s3a.threads.core", "16")
-      conf.set("fs.s3a.connection.maximum", "32")
+      conf.set("fs.s3a.threads.max", s3MaxConnections.toString)
+      conf.set("fs.s3a.threads.core", (s3MaxConnections / 2).toString)
+      conf.set("fs.s3a.connection.maximum", (s3MaxConnections + 32).toString)
       conf.set("fs.s3a.connection.timeout", "30000")
       conf.set("fs.s3a.socket.timeout", "30000")
       conf.set("fs.s3a.retry.limit", "3")
@@ -202,7 +203,8 @@ object MilvusS3Option {
       options.getOrDefault(Constants.S3SecretKey, "minioadmin"),
       options.getOrDefault(Constants.S3UseSSL, "false").toBoolean,
       options.getOrDefault(Constants.S3PathStyleAccess, "true").toBoolean,
-      options.getOrDefault(MilvusOption.MilvusCollectionPKType, "")
+      options.getOrDefault(MilvusOption.MilvusCollectionPKType, ""),
+      options.getOrDefault(Constants.S3MaxConnections, "32").toInt
     )
   }
 }
