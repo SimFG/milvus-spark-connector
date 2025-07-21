@@ -629,7 +629,7 @@ class MilvusBinlogPartitionReader(
   }
 
   private def readInsertEvent(): Boolean = {
-    if (insertEvent != null && currentIndex == insertEvent.datas.length - 1) {
+    if (insertEvent != null && currentIndex == insertEvent.getDataSize() - 1) {
       insertEvent = null
       currentIndex = 0
     }
@@ -644,7 +644,7 @@ class MilvusBinlogPartitionReader(
   }
 
   private def getInsertInternalRow(): InternalRow = {
-    val data = insertEvent.datas(currentIndex)
+    val data = insertEvent.getDataString(currentIndex)
     val timestamp = insertEvent.timestamp
     val dataType = insertEvent.dataType.value
 

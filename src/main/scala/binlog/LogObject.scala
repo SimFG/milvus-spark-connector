@@ -50,6 +50,7 @@ object Constants {
   val S3UseSSL = "s3.useSSL"
   val S3PathStyleAccess = "s3.pathStyleAccess"
   val S3MaxConnections = "s3.maxConnections"
+  val S3PreloadPoolSize = "s3.preloadPoolSize"
 
   val TimestampFieldID = "1"
 
@@ -185,11 +186,107 @@ class DeleteEventData(
 
 class InsertEventData(
     val baseEventData: BaseEventData,
-    var datas: ArrayBuffer[String],
     var timestamp: Long,
-    var dataType: DataType
+    var dataType: DataType,
+    // 原始类型数据存储
+    var booleanData: ArrayBuffer[Boolean] = ArrayBuffer.empty[Boolean],
+    var int8Data: ArrayBuffer[Byte] = ArrayBuffer.empty[Byte],
+    var int16Data: ArrayBuffer[Short] = ArrayBuffer.empty[Short],
+    var int32Data: ArrayBuffer[Int] = ArrayBuffer.empty[Int],
+    var int64Data: ArrayBuffer[Long] = ArrayBuffer.empty[Long],
+    var float32Data: ArrayBuffer[Float] = ArrayBuffer.empty[Float],
+    var float64Data: ArrayBuffer[Double] = ArrayBuffer.empty[Double],
+    var stringData: ArrayBuffer[String] = ArrayBuffer.empty[String],
+    var arrayData: ArrayBuffer[Array[String]] =
+      ArrayBuffer.empty[Array[String]],
+    var binaryVectorData: ArrayBuffer[Array[Byte]] =
+      ArrayBuffer.empty[Array[Byte]],
+    var floatVectorData: ArrayBuffer[Array[Float]] =
+      ArrayBuffer.empty[Array[Float]],
+    var float16VectorData: ArrayBuffer[Array[Float]] =
+      ArrayBuffer.empty[Array[Float]],
+    var bfloat16VectorData: ArrayBuffer[Array[Float]] =
+      ArrayBuffer.empty[Array[Float]],
+    var int8VectorData: ArrayBuffer[Array[Byte]] =
+      ArrayBuffer.empty[Array[Byte]],
+    var sparseVectorData: ArrayBuffer[Map[Long, Float]] =
+      ArrayBuffer.empty[Map[Long, Float]]
 ) {
   override def toString: String = {
-    s"InsertEventData(baseEventData: $baseEventData, datas: $datas, timestamp: $timestamp, dataType: $dataType)"
+    s"TypedInsertEventData(baseEventData: $baseEventData, timestamp: $timestamp, dataType: $dataType, dataSize: ${getDataSize()})"
+  }
+
+  def getDataSize(): Int = {
+    dataType match {
+      case DataType.Bool   => booleanData.length
+      case DataType.Int8   => int8Data.length
+      case DataType.Int16  => int16Data.length
+      case DataType.Int32  => int32Data.length
+      case DataType.Int64  => int64Data.length
+      case DataType.Float  => float32Data.length
+      case DataType.Double => float64Data.length
+      case DataType.String | DataType.VarChar | DataType.JSON =>
+        stringData.length
+      case DataType.Array             => arrayData.length
+      case DataType.BinaryVector      => binaryVectorData.length
+      case DataType.FloatVector       => floatVectorData.length
+      case DataType.Float16Vector     => float16VectorData.length
+      case DataType.BFloat16Vector    => bfloat16VectorData.length
+      case DataType.Int8Vector        => int8VectorData.length
+      case DataType.SparseFloatVector => sparseVectorData.length
+      case _                          => 0
+    }
+  }
+
+  def getData(index: Int): Any = {
+    dataType match {
+      case DataType.Bool   => booleanData(index)
+      case DataType.Int8   => int8Data(index)
+      case DataType.Int16  => int16Data(index)
+      case DataType.Int32  => int32Data(index)
+      case DataType.Int64  => int64Data(index)
+      case DataType.Float  => float32Data(index)
+      case DataType.Double => float64Data(index)
+      case DataType.String | DataType.VarChar | DataType.JSON =>
+        stringData(index)
+      case DataType.Array             => arrayData(index)
+      case DataType.BinaryVector      => binaryVectorData(index)
+      case DataType.FloatVector       => floatVectorData(index)
+      case DataType.Float16Vector     => float16VectorData(index)
+      case DataType.BFloat16Vector    => bfloat16VectorData(index)
+      case DataType.Int8Vector        => int8VectorData(index)
+      case DataType.SparseFloatVector => sparseVectorData(index)
+      case _                          => null
+    }
+  }
+
+  // 获取指定索引数据的字符串表示
+  def getDataString(index: Int): String = {
+    dataType match {
+      case DataType.Bool   => booleanData(index).toString
+      case DataType.Int8   => int8Data(index).toString
+      case DataType.Int16  => int16Data(index).toString
+      case DataType.Int32  => int32Data(index).toString
+      case DataType.Int64  => int64Data(index).toString
+      case DataType.Float  => float32Data(index).toString
+      case DataType.Double => float64Data(index).toString
+      case DataType.String | DataType.VarChar | DataType.JSON =>
+        stringData(index)
+      case DataType.Array =>
+        arrayData(index).map(_.toString).mkString(",")
+      case DataType.BinaryVector =>
+        binaryVectorData(index).map(_.toString).mkString(",")
+      case DataType.FloatVector =>
+        floatVectorData(index).map(_.toString).mkString(",")
+      case DataType.Float16Vector =>
+        float16VectorData(index).map(_.toString).mkString(",")
+      case DataType.BFloat16Vector =>
+        bfloat16VectorData(index).map(_.toString).mkString(",")
+      case DataType.Int8Vector =>
+        int8VectorData(index).map(_.toString).mkString(",")
+      case DataType.SparseFloatVector =>
+        sparseVectorData(index).map { case (k, v) => s"$k:$v" }.mkString(",")
+      case _ => "null"
+    }
   }
 }

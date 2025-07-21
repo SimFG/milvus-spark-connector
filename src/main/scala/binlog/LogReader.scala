@@ -173,7 +173,6 @@ object LogReader {
 
     val insertData = new InsertEventData(
       baseEventData,
-      ArrayBuffer.empty[String],
       eventHeader.timestamp,
       dataType
     )
@@ -188,57 +187,47 @@ object LogReader {
         val dataStrings = parquetPayloadReader
           .getStringFromPayload(0)
           .map(_.toString)
-        insertData.datas ++= dataStrings
+        insertData.stringData ++= dataStrings
       }
       case DataType.Bool => {
         val dataBooleans = parquetPayloadReader
           .getBooleanFromPayload(0)
-          .map(_.toString)
-        insertData.datas ++= dataBooleans
+        insertData.booleanData ++= dataBooleans
       }
       case DataType.Int8 => {
         val dataInt8s = parquetPayloadReader
           .getInt8FromPayload(0)
-          .map(_.toString)
-        insertData.datas ++= dataInt8s
+        insertData.int8Data ++= dataInt8s
       }
       case DataType.Int16 => {
         val dataInt16s = parquetPayloadReader
           .getInt16FromPayload(0)
-          .map(_.toString)
-        insertData.datas ++= dataInt16s
+        insertData.int16Data ++= dataInt16s
       }
       case DataType.Int32 => {
         val dataInt32s = parquetPayloadReader
           .getInt32FromPayload(0)
-          .map(_.toString)
-        insertData.datas ++= dataInt32s
+        insertData.int32Data ++= dataInt32s
       }
       case DataType.Int64 => {
         val dataInt64s = parquetPayloadReader
           .getInt64FromPayload(0)
-          .map(_.toString)
-        insertData.datas ++= dataInt64s
+        insertData.int64Data ++= dataInt64s
       }
       case DataType.Float => {
         val dataFloats = parquetPayloadReader
           .getFloat32FromPayload(0)
-          .map(_.toString)
-        insertData.datas ++= dataFloats
+        insertData.float32Data ++= dataFloats
       }
       case DataType.Double => {
         val dataDoubles = parquetPayloadReader
           .getFloat64FromPayload(0)
-          .map(_.toString)
-        insertData.datas ++= dataDoubles
+        insertData.float64Data ++= dataDoubles
       }
       case DataType.Array => {
         val dataArrays = parquetPayloadReader
           .getArrayFromPayload(0)
-          .map(array => {
-            array.map(_.toString).mkString(",")
-          })
-        insertData.datas ++= dataArrays
+        insertData.arrayData ++= dataArrays
       }
       case DataType.Geometry => {
         throw new IOException(
@@ -253,50 +242,32 @@ object LogReader {
       case DataType.BinaryVector => {
         val dataBinaryVectors = parquetPayloadReader
           .getBinaryVectorFromPayload(0)
-          .map(vector => {
-            vector.map(_.toString).mkString(",")
-          })
-        insertData.datas ++= dataBinaryVectors
+        insertData.binaryVectorData ++= dataBinaryVectors
       }
       case DataType.FloatVector => {
         val dataFloatVectors = parquetPayloadReader
           .getFloatVectorFromPayload(0)
-          .map(vector => {
-            vector.map(_.toString).mkString(",")
-          })
-        insertData.datas ++= dataFloatVectors
+        insertData.floatVectorData ++= dataFloatVectors
       }
       case DataType.Float16Vector => {
         val dataFloat16Vectors = parquetPayloadReader
           .getFloat16VectorFromPayload(0)
-          .map(vector => {
-            vector.map(_.toString).mkString(",")
-          })
-        insertData.datas ++= dataFloat16Vectors
+        insertData.float16VectorData ++= dataFloat16Vectors
       }
       case DataType.BFloat16Vector => {
         val dataBFloat16Vectors = parquetPayloadReader
           .getBFloat16VectorFromPayload(0)
-          .map(vector => {
-            vector.map(_.toString).mkString(",")
-          })
-        insertData.datas ++= dataBFloat16Vectors
+        insertData.bfloat16VectorData ++= dataBFloat16Vectors
       }
       case DataType.Int8Vector => {
         val dataInt8Vectors = parquetPayloadReader
           .getInt8VectorFromPayload(0)
-          .map(vector => {
-            vector.map(_.toString).mkString(",")
-          })
-        insertData.datas ++= dataInt8Vectors
+        insertData.int8VectorData ++= dataInt8Vectors
       }
       case DataType.SparseFloatVector => {
         val dataSparseVectors = parquetPayloadReader
           .getSparseVectorFromPayload(0)
-          .map(vector => {
-            vector.map(_.toString).mkString(",")
-          })
-        insertData.datas ++= dataSparseVectors
+        insertData.sparseVectorData ++= dataSparseVectors
       }
       case _ => {
         throw new IOException(

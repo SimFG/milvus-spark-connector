@@ -129,7 +129,8 @@ case class MilvusS3Option(
     s3UseSSL: Boolean,
     s3PathStyleAccess: Boolean,
     milvusPKType: String,
-    s3MaxConnections: Int
+    s3MaxConnections: Int,
+    s3PreloadPoolSize: Int
 ) extends Serializable {
   def notEmpty(str: String): Boolean = str != null && str.trim.nonEmpty
 
@@ -204,7 +205,8 @@ object MilvusS3Option {
       options.getOrDefault(Constants.S3UseSSL, "false").toBoolean,
       options.getOrDefault(Constants.S3PathStyleAccess, "true").toBoolean,
       options.getOrDefault(MilvusOption.MilvusCollectionPKType, ""),
-      options.getOrDefault(Constants.S3MaxConnections, "32").toInt
+      options.getOrDefault(Constants.S3MaxConnections, "32").toInt,
+      options.getOrDefault(Constants.S3PreloadPoolSize, "4").toInt
     )
   }
 }

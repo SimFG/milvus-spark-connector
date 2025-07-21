@@ -3,7 +3,9 @@ package com.zilliz.spark.connector.binlog
 import java.io.{File, FileOutputStream, IOException}
 import java.nio.file.{Files, Paths}
 import java.nio.ByteBuffer
+import java.util.HashMap
 import scala.collection.mutable.ListBuffer
+import scala.collection.JavaConverters._
 import scala.util.{Try, Using}
 
 import org.apache.hadoop.conf.Configuration
@@ -383,28 +385,28 @@ class ParquetPayloadReader(data: Array[Byte])
     values.toList
   }
 
-  def getInt8VectorFromPayload(columnIndex: Int): List[Array[Int]] = {
-    val values = new ListBuffer[Array[Int]]()
+  def getInt8VectorFromPayload(columnIndex: Int): List[Array[Byte]] = {
+    val values = new ListBuffer[Array[Byte]]()
     processParquetFile((group, schema) => {
       val dim =
         schema.getColumns().get(0).getPrimitiveType().getTypeLength()
-      val int8Vector = new Array[Int](dim)
+      val int8Vector = new Array[Byte](dim)
       val buffer = group.getBinary(columnIndex, 0).toByteBuffer
       for (i <- 0 until dim) {
-        int8Vector(i) = buffer.get().toInt
+        int8Vector(i) = buffer.get()
       }
       values += int8Vector
     })
     values.toList
   }
 
-  def getSparseVectorFromPayload(columnIndex: Int): List[Array[String]] = {
-    val values = new ListBuffer[Array[String]]()
+  def getSparseVectorFromPayload(columnIndex: Int): List[Map[Long, Float]] = {
+    val values = new ListBuffer[Map[Long, Float]]()
     processParquetFile((group, schema) => {
       val buffer = group.getBinary(columnIndex, 0).toByteBuffer
       val dataLen = (buffer.limit() - buffer.position()) / 8
       var sparseBytes = new ListBuffer[Byte]()
-      var sparseStrs = new ListBuffer[String]()
+      var sparseMap = new HashMap[Long, Float]()
       for (i <- 0L until dataLen) {
         val idxBytes = new Array[Byte](4)
         buffer.get(idxBytes)
@@ -414,10 +416,10 @@ class ParquetPayloadReader(data: Array[Byte])
         val value = FloatConverter.fromFloatBytes(valueBytes.toSeq)
         sparseBytes ++= idxBytes
         sparseBytes ++= valueBytes
-        sparseStrs += s"($idx:$value)"
+        sparseMap.put(idx, value)
       }
       // values += sparseBytes.toArray
-      values += sparseStrs.toArray
+      values += sparseMap.asScala.toMap
       // println(
       //   s"fubang new, dataLen: $dataLen, currentPos: ${buffer
       //       .position()}, limit: ${buffer.limit()}, sparseStrs: ${sparseStrs
