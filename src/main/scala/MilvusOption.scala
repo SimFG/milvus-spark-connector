@@ -165,13 +165,27 @@ case class MilvusS3Option(
     if (notEmpty(s3FileSystemType)) {
       val conf = getConf()
       val fileSystem = new S3AFileSystem()
-      fileSystem.initialize(
-        new URI(
-          s"s3a://${s3BucketName}/"
-        ),
-        conf
-      )
-      fileSystem
+      try {
+        fileSystem.initialize(
+          new URI(
+            s"s3a://${s3BucketName}/"
+          ),
+          conf
+        )
+        fileSystem
+      } catch {
+        case e: Exception =>
+          // Close the filesystem if initialization failed
+          try {
+            fileSystem.close()
+          } catch {
+            case _: Exception => // Ignore close errors
+          }
+          throw new RuntimeException(
+            s"Failed to initialize S3 FileSystem for bucket $s3BucketName: ${e.getMessage}",
+            e
+          )
+      }
     } else {
       val conf = getConf()
       path.getFileSystem(conf)

@@ -1,9 +1,17 @@
 package com.zilliz.spark.connector.sources
 
 import java.io.InputStream
-import java.util.concurrent.{CompletableFuture, Executors, TimeUnit}
+import java.util.concurrent.{
+  CompletableFuture,
+  ConcurrentHashMap,
+  Executors,
+  TimeUnit
+}
+import java.util.concurrent.atomic.AtomicInteger
+import scala.collection.concurrent
 import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.concurrent.duration._
+import scala.jdk.CollectionConverters._
 import scala.util.{Failure, Success, Try}
 import scala.util.control.Breaks._
 
@@ -41,17 +49,22 @@ class MilvusPartitionReader(
 ) extends PartitionReader[InternalRow]
     with Logging {
 
-  // Shared FileSystem instance for all field file readers
-  private var sharedFileSystem: FileSystem = _
-  private var fieldFileReaders: Map[String, FieldFileReader] = Map.empty
+  @volatile private var fieldFileReaders: Map[String, FieldFileReader] =
+    Map.empty
+  private val fieldReadersLock = new Object()
+
   private var currentFieldFilesIndex: Int = 0 // Index for current reading
 
-  // Enhanced preloading mechanism with 16 concurrent tasks
-  private var preloadedBatches: Map[Int, Map[String, FieldFileReader]] =
-    Map.empty
-  private var preloadFutures: Map[Int, Future[Map[String, FieldFileReader]]] =
-    Map.empty
-  private var nextPreloadIndex: Int = 0 // Index for next preload task
+  private val preloadedBatches
+      : concurrent.Map[Int, Map[String, FieldFileReader]] =
+    new ConcurrentHashMap[Int, Map[String, FieldFileReader]]().asScala
+
+  private val preloadFutures
+      : concurrent.Map[Int, Future[Map[String, FieldFileReader]]] =
+    new ConcurrentHashMap[Int, Future[Map[String, FieldFileReader]]]().asScala
+
+  private val nextPreloadIndex: AtomicInteger = new AtomicInteger(0)
+
   private val preloadExecutor =
     Executors.newFixedThreadPool(
       options.s3PreloadPoolSize
@@ -79,13 +92,13 @@ class MilvusPartitionReader(
 
   private class MilvusBinlogFieldFileReader(
       filePath: String,
-      sharedFs: FileSystem, // Accept shared FileSystem instead of creating own
       options: MilvusS3Option
   ) extends FieldFileReader
       with Logging {
 
     private val path = options.getFilePath(filePath)
     private var inputStream: InputStream = _
+    private var fileSystem: FileSystem = _
 
     // Binlog specific state (adapt from MilvusBinlogPartitionReader)
     private val objectMapper =
@@ -107,13 +120,20 @@ class MilvusPartitionReader(
       Constants.LogReaderTypeInsert // Placeholder - determine actual type
 
     override def open(): Unit = {
-      // logInfo(s"Opening field file: $filePath")
-      inputStream = sharedFs.open(path) // Use shared FileSystem
-      // Read descriptor event to get data type
-      descriptorEvent = LogReader.readDescriptorEvent(inputStream)
-      dataType = descriptorEvent.data.payloadDataType
-      hasNext()
-      // logInfo(s"Opened file $filePath. Data type: $dataType")
+      try {
+        // 每个 reader 独立创建 FileSystem
+        fileSystem = options.getFileSystem(path)
+        inputStream = fileSystem.open(path)
+        // Read descriptor event to get data type
+        descriptorEvent = LogReader.readDescriptorEvent(inputStream)
+        dataType = descriptorEvent.data.payloadDataType
+        hasNext()
+        logInfo(s"Successfully opened field file: $filePath")
+      } catch {
+        case e: Exception =>
+          logError(s"Failed to open field file $filePath: ${e.getMessage}", e)
+          throw e
+      }
     }
 
     override def getDataType(): MilvusDataType = dataType
@@ -194,7 +214,6 @@ class MilvusPartitionReader(
     }
 
     override def close(): Unit = {
-      // logInfo(s"Closing field file: $filePath")
       if (inputStream != null) {
         try {
           inputStream.close()
@@ -202,18 +221,19 @@ class MilvusPartitionReader(
           case e: Exception =>
             logWarning(s"Error closing input stream for $filePath", e)
         }
+        inputStream = null
       }
-      // Note: Don't close shared FileSystem here
-    }
-  }
 
-  // Initialize shared FileSystem
-  private def initializeSharedFileSystem(): Unit = {
-    if (fieldFilesSeq.nonEmpty && fieldFilesSeq.head.nonEmpty) {
-      val samplePath = fieldFilesSeq.head.values.head
-      val path = options.getFilePath(samplePath)
-      sharedFileSystem = options.getFileSystem(path)
-      logInfo(s"Initialized shared FileSystem for path: $samplePath")
+      // 关闭独立的 FileSystem
+      if (fileSystem != null) {
+        try {
+          fileSystem.close()
+        } catch {
+          case e: Exception =>
+            logWarning(s"Error closing FileSystem for $filePath", e)
+        }
+        fileSystem = null
+      }
     }
   }
 
@@ -223,8 +243,6 @@ class MilvusPartitionReader(
     if (fieldFilesSeq.isEmpty) {
       throw new IllegalStateException("No field files provided in the sequence")
     }
-
-    initializeSharedFileSystem()
 
     // Start background preloading task for all files
     startBackgroundPreloading()
@@ -242,19 +260,20 @@ class MilvusPartitionReader(
   private def startBackgroundPreloading(): Unit = {
     backgroundPreloadTask = Some(Future {
       while (
-        !stopBackgroundPreload && nextPreloadIndex < fieldFilesSeq.length
+        !stopBackgroundPreload && nextPreloadIndex.get() < fieldFilesSeq.length
       ) {
+        val currentIndex = nextPreloadIndex.get()
+
         // Check if we already have a future for this batch
-        if (!preloadFutures.contains(nextPreloadIndex)) {
-          val batchIndex = nextPreloadIndex
-          preloadFutures += (batchIndex -> Future {
+        if (!preloadFutures.contains(currentIndex)) {
+          val batchIndex = currentIndex
+          val future = Future {
             try {
               val batchFieldFiles = fieldFilesSeq(batchIndex)
               val batchReaders =
                 batchFieldFiles.map { case (fieldName, filePath) =>
                   val reader = new MilvusBinlogFieldFileReader(
                     filePath,
-                    sharedFileSystem,
                     options
                   )
                   reader.open()
@@ -272,50 +291,47 @@ class MilvusPartitionReader(
                 )
                 Map.empty[String, FieldFileReader]
             }
-          })
+          }
 
-          // Process completed futures and move them to preloadedBatches
-          processCompletedFutures()
+          // 原子性地添加future
+          preloadFutures.putIfAbsent(batchIndex, future)
+
+          // 异步处理完成的futures
+          future.onComplete {
+            case Success(readers) if readers.nonEmpty =>
+              preloadedBatches.put(batchIndex, readers)
+              preloadFutures.remove(batchIndex)
+              logInfo(
+                s"Moved completed preload for batch $batchIndex to preloadedBatches"
+              )
+            case Success(_) =>
+              preloadFutures.remove(batchIndex)
+              logWarning(
+                s"Preload for batch $batchIndex completed but was empty"
+              )
+            case Failure(e) =>
+              preloadFutures.remove(batchIndex)
+              logWarning(
+                s"Preload for batch $batchIndex failed: ${e.getMessage}"
+              )
+          }
         }
 
-        nextPreloadIndex += 1
+        nextPreloadIndex.incrementAndGet()
       }
 
       logInfo("Background preloading task completed for all batches")
     })
   }
 
-  // Process completed futures and move them to preloadedBatches
-  private def processCompletedFutures(): Unit = {
-    val completedFutures = preloadFutures.filter { case (_, future) =>
-      future.isCompleted
-    }
-
-    completedFutures.foreach { case (batchIndex, future) =>
-      future.value match {
-        case Some(Success(readers)) if readers.nonEmpty =>
-          preloadedBatches += (batchIndex -> readers)
-          logInfo(
-            s"Moved completed preload for batch $batchIndex to preloadedBatches"
-          )
-        case Some(Success(_)) =>
-          logWarning(s"Preload for batch $batchIndex completed but was empty")
-        case Some(Failure(e)) =>
-          logWarning(s"Preload for batch $batchIndex failed: ${e.getMessage}")
-        case None =>
-          // Should not happen if isCompleted is true
-          logWarning(
-            s"Preload for batch $batchIndex has no value despite being completed"
-          )
-      }
-
-      // Remove from futures map
-      preloadFutures -= batchIndex
-    }
-  }
-
   private def closeCurrentReaders(): Unit = {
-    fieldFileReaders.values.foreach { reader =>
+    val readersToClose = fieldReadersLock.synchronized {
+      val readers = fieldFileReaders
+      fieldFileReaders = Map.empty
+      readers
+    }
+
+    readersToClose.values.foreach { reader =>
       try {
         reader.close()
       } catch {
@@ -323,7 +339,6 @@ class MilvusPartitionReader(
           logWarning(s"Error closing field reader", e)
       }
     }
-    fieldFileReaders = Map.empty
   }
 
   // Check if there is a next row by checking if all field readers have a next record
@@ -333,17 +348,23 @@ class MilvusPartitionReader(
       return false
     }
 
-    // Process any completed futures first
-    processCompletedFutures()
-
     // Check if we need to load the current batch
-    if (fieldFileReaders.isEmpty) {
+    val currentReaders = fieldReadersLock.synchronized {
+      fieldFileReaders
+    }
+
+    if (currentReaders.isEmpty) {
       // Wait for the current batch to be preloaded
       waitForBatchToBePreloaded(currentFieldFilesIndex)
     }
 
+    // Get the updated readers after potential loading
+    val updatedReaders = fieldReadersLock.synchronized {
+      fieldFileReaders
+    }
+
     // Check if any reader is not initialized (shouldn't happen after open)
-    if (fieldFileReaders.isEmpty) {
+    if (updatedReaders.isEmpty) {
       logWarning(
         "MilvusDataReader.next() called before open() or with empty readers."
       )
@@ -352,12 +373,17 @@ class MilvusPartitionReader(
 
     var hasNext = false
     do {
+      // Get current readers safely
+      val currentFieldReaders = fieldReadersLock.synchronized {
+        fieldFileReaders
+      }
+
       // Check if ALL field readers have a next record
-      val allHaveNext = fieldFileReaders.values.forall(_.hasNext())
+      val allHaveNext = currentFieldReaders.values.forall(_.hasNext())
 
       // Consistency check: If some have next and some don't, it's an alignment error
-      if (!allHaveNext && fieldFileReaders.values.exists(_.hasNext())) {
-        val status = fieldFileReaders
+      if (!allHaveNext && currentFieldReaders.values.exists(_.hasNext())) {
+        val status = currentFieldReaders
           .map { case (name, reader) => s"$name: ${reader.hasNext()}" }
           .mkString(", ")
         throw new IllegalStateException(
@@ -374,7 +400,7 @@ class MilvusPartitionReader(
           return true // Found a row that passes the filters
         }
         // If the row doesn't pass the filters, move to next record and continue
-        fieldFileReaders.values.foreach { reader =>
+        currentFieldReaders.values.foreach { reader =>
           reader.moveToNextRecord()
         }
       } else {
@@ -412,43 +438,68 @@ class MilvusPartitionReader(
       )
     }
 
-    // First check if it's already in preloadedBatches
-    preloadedBatches.get(batchIndex) match {
-      case Some(preloadedReaders) if preloadedReaders.nonEmpty =>
-        fieldFileReaders = preloadedReaders
-        preloadedBatches -= batchIndex
-        logInfo(s"Loaded batch $batchIndex from preloaded batches")
+    val maxRetries = 50
+    val retryIntervalMs = 100L
+    var retryCount = 0
 
-      case _ =>
-        // Check if there's a future for this batch
-        preloadFutures.get(batchIndex) match {
-          case Some(future) =>
-            // Wait for the future to complete with infinite timeout and periodic warnings
-            logInfo(s"Waiting for batch $batchIndex to be preloaded...")
-            try {
-              val preloadedReaders =
-                waitForFutureWithWarnings(future, batchIndex)
-              preloadFutures -= batchIndex
-              if (preloadedReaders.nonEmpty) {
-                fieldFileReaders = preloadedReaders
-                logInfo(s"Successfully loaded batch $batchIndex after waiting")
-              } else {
-                throw new IllegalStateException(
-                  s"Batch $batchIndex preload returned empty readers"
+    while (retryCount < maxRetries) {
+      // First check if it's already in preloadedBatches
+      preloadedBatches.get(batchIndex) match {
+        case Some(preloadedReaders) if preloadedReaders.nonEmpty =>
+          fieldReadersLock.synchronized {
+            fieldFileReaders = preloadedReaders
+          }
+          preloadedBatches.remove(batchIndex)
+          logInfo(s"Loaded batch $batchIndex from preloaded batches")
+          return
+
+        case _ =>
+          // Check if there's a future for this batch
+          preloadFutures.get(batchIndex) match {
+            case Some(future) =>
+              // Wait for the future to complete with infinite timeout and periodic warnings
+              logInfo(s"Waiting for batch $batchIndex to be preloaded...")
+              try {
+                val preloadedReaders =
+                  waitForFutureWithWarnings(future, batchIndex)
+                preloadFutures.remove(batchIndex)
+                if (preloadedReaders.nonEmpty) {
+                  fieldReadersLock.synchronized {
+                    fieldFileReaders = preloadedReaders
+                  }
+                  logInfo(
+                    s"Successfully loaded batch $batchIndex after waiting"
+                  )
+                  return
+                } else {
+                  throw new IllegalStateException(
+                    s"Batch $batchIndex preload returned empty readers"
+                  )
+                }
+              } catch {
+                case e: Exception =>
+                  throw new IllegalStateException(
+                    s"Batch $batchIndex preload failed: ${e.getMessage}"
+                  )
+              }
+            case None =>
+              // Future not found yet, wait and retry
+              if (retryCount % 5 == 0) {
+                logInfo(
+                  s"Waiting for preload future to be created for batch $batchIndex..."
                 )
               }
-            } catch {
-              case e: Exception =>
-                throw new IllegalStateException(
-                  s"Batch $batchIndex preload failed: ${e.getMessage}"
-                )
-            }
-          case None =>
-            throw new IllegalStateException(
-              s"No preload task found for batch $batchIndex"
-            )
-        }
+              Thread.sleep(retryIntervalMs)
+              retryCount += 1
+          }
+      }
     }
+
+    throw new IllegalStateException(
+      s"No preload task found for batch $batchIndex after $maxRetries retries. " +
+        s"Available futures: ${preloadFutures.keys.toSeq.sorted}, " +
+        s"Available preloaded batches: ${preloadedBatches.keys.toSeq.sorted}"
+    )
   }
 
   // Wait for future with infinite timeout and periodic warnings
@@ -496,25 +547,29 @@ class MilvusPartitionReader(
 
   // Get the current row by reading one record from each field reader
   override def get(): InternalRow = {
-    if (fieldFileReaders.isEmpty) {
+    val currentReaders = fieldReadersLock.synchronized {
+      fieldFileReaders
+    }
+
+    if (currentReaders.isEmpty) {
       throw new IllegalStateException(
         "MilvusDataReader.get() called before open() or with empty readers."
       )
     }
 
     // Create a new InternalRow with the correct number of fields
-    val row = InternalRow.fromSeq(Seq.fill(fieldFileReaders.size)(null))
+    val row = InternalRow.fromSeq(Seq.fill(currentReaders.size)(null))
 
     // Read one record from each field reader and set the corresponding field in the row
     // Ensure the order matches the schema's field order
     // Convert field names to integers and sort them
-    val sortedFieldIndices = fieldFileReaders.keys
+    val sortedFieldIndices = currentReaders.keys
       .map(fieldName => fieldName.toInt)
       .toSeq
       .sorted
       .zipWithIndex
     sortedFieldIndices.foreach { case (fieldID, index) =>
-      fieldFileReaders.get(fieldID.toString) match {
+      currentReaders.get(fieldID.toString) match {
         case Some(reader) =>
           try {
             val fieldValue = reader.readNextRecord()
@@ -652,25 +707,29 @@ class MilvusPartitionReader(
   }
 
   private def buildCurrentRow(): InternalRow = {
-    if (fieldFileReaders.isEmpty) {
+    val currentReaders = fieldReadersLock.synchronized {
+      fieldFileReaders
+    }
+
+    if (currentReaders.isEmpty) {
       throw new IllegalStateException(
         "MilvusDataReader.buildCurrentRow() called before open() or with empty readers."
       )
     }
 
     // Create a new InternalRow with the correct number of fields
-    val row = InternalRow.fromSeq(Seq.fill(fieldFileReaders.size)(null))
+    val row = InternalRow.fromSeq(Seq.fill(currentReaders.size)(null))
 
     // Read one record from each field reader and set the corresponding field in the row
     // Ensure the order matches the schema's field order
     // Convert field names to integers and sort them
-    val sortedFieldIndices = fieldFileReaders.keys
+    val sortedFieldIndices = currentReaders.keys
       .map(fieldName => fieldName.toInt)
       .toSeq
       .sorted
       .zipWithIndex
     sortedFieldIndices.foreach { case (fieldID, index) =>
-      fieldFileReaders.get(fieldID.toString) match {
+      currentReaders.get(fieldID.toString) match {
         case Some(reader) =>
           try {
             val fieldValue = reader.readNextRecord()
@@ -841,7 +900,7 @@ class MilvusPartitionReader(
         )
       }
     }
-    preloadFutures = Map.empty
+    preloadFutures.clear()
 
     // Close current field file readers
     closeCurrentReaders()
@@ -857,19 +916,7 @@ class MilvusPartitionReader(
         }
       }
     }
-    preloadedBatches = Map.empty
-
-    // Close shared FileSystem
-    if (sharedFileSystem != null) {
-      try {
-        sharedFileSystem.close()
-        logInfo("Shared FileSystem closed successfully")
-      } catch {
-        case e: Exception =>
-          logWarning("Error closing shared FileSystem", e)
-      }
-      sharedFileSystem = null
-    }
+    preloadedBatches.clear()
 
     // Shutdown executor for preloading
     try {

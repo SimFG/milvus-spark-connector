@@ -10,15 +10,17 @@ object MilvusDataReader {
       config: MilvusDataReaderConfig
   ): DataFrame = {
 
+    val fileSystemType = config.options.getOrElse(
+      MilvusOption.S3FileSystemTypeName,
+      "s3a://"
+    )
+
     val insertDF = spark.read
       .format("milvus")
       .options(config.options)
       .option(
         MilvusOption.S3FileSystemTypeName,
-        config.options.getOrElse(
-          MilvusOption.S3FileSystemTypeName,
-          "s3a://"
-        )
+        fileSystemType
       )
       .option(MilvusOption.ReaderType, "insert")
       .option(MilvusOption.MilvusUri, config.uri)
@@ -29,6 +31,10 @@ object MilvusDataReader {
     val deleteDF = spark.read
       .format("milvusbinlog")
       .options(config.options)
+      .option(
+        MilvusOption.S3FileSystemTypeName,
+        fileSystemType
+      )
       .option(MilvusOption.ReaderType, "delete")
       .option(MilvusOption.MilvusUri, config.uri)
       .option(MilvusOption.MilvusToken, config.token)

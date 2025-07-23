@@ -34,7 +34,7 @@ object Dependencies {
   lazy val parquetHadoop =
     "org.apache.parquet" % "parquet-hadoop" % parquetVersion
   lazy val hadoopCommon =
-    "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided,test" exclude ("javax.activation", "activation")
+    "org.apache.hadoop" % "hadoop-common" % hadoopVersion exclude ("javax.activation", "activation")
   lazy val hadoopAws =
     "org.apache.hadoop" % "hadoop-aws" % hadoopVersion
   lazy val awsSdkS3 =

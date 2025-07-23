@@ -135,6 +135,7 @@ case class MilvusTable(
     } else {
       Seq[String]()
     }
+  logInfo(s"MilvusTable fieldIDs: $fieldIDs")
 
   def initInfo(): Unit = {
     val client = MilvusClient(milvusOption)
@@ -255,7 +256,8 @@ class MilvusScanBuilder(
     options: CaseInsensitiveStringMap
 ) extends ScanBuilder
     with SupportsPushDownFilters
-    with SupportsPushDownRequiredColumns {
+    with SupportsPushDownRequiredColumns
+    with Logging {
   private var currentSchema = schema
   private var currentOptions = options
 
@@ -263,6 +265,9 @@ class MilvusScanBuilder(
   private var pushedFilterArray: Array[Filter] = Array.empty[Filter]
 
   override def pruneColumns(requiredSchema: StructType): Unit = {
+    if (currentOptions.getOrDefault(MilvusOption.ReaderFieldIDs, "").nonEmpty) {
+      return
+    }
     val fieldName2ID = mutable.Map[String, Long]()
     schema.fields.zipWithIndex.foreach { case (field, index) =>
       if (index < 2) {
@@ -278,6 +283,7 @@ class MilvusScanBuilder(
       }
     })
     fieldNames = fieldNames.sortBy(fieldName => fieldName2ID(fieldName))
+    logInfo(s"fieldNames after sort: $fieldNames")
 
     val tmpMap = new HashMap[String, String]()
     options.asScala.foreach { case (key, value) =>
