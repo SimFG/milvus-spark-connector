@@ -1,19 +1,15 @@
 package com.zilliz.spark.connector.binlog
 
-import java.io.{File, FileOutputStream, IOException}
-import java.nio.file.{Files, Paths}
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.util.HashMap
 import scala.collection.mutable.ListBuffer
 import scala.collection.JavaConverters._
-import scala.util.{Try, Using}
+import scala.util.Try
 
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
 import org.apache.parquet.column.page.PageReadStore
 import org.apache.parquet.example.data.simple.convert.GroupRecordConverter
 import org.apache.parquet.example.data.Group
-import org.apache.parquet.hadoop.util.HadoopInputFile
 import org.apache.parquet.hadoop.ParquetFileReader
 import org.apache.parquet.io.{ColumnIOFactory, MessageColumnIO, RecordReader}
 import org.apache.parquet.schema.{MessageType, PrimitiveType, Type}
@@ -31,14 +27,11 @@ class ParquetPayloadReader(data: Array[Byte])
     extends AutoCloseable // {
     with Logging {
 
-  private val hadoopConfig: Configuration = new Configuration()
-  private var tempFile: Option[File] = None
   private var reader: Option[ParquetFileReader] = None
   private var schema: Option[MessageType] = None
 
-  /** Initializes the Parquet reader. This method creates a temporary file to
-    * store the Parquet data, since Parquet libraries work with files rather
-    * than byte arrays.
+  /** Initializes the Parquet reader using ByteArrayInputFile to read Parquet
+    * data directly from byte array without temporary files.
     */
   private def initializeReader(): Unit = {
     if (reader.isDefined) {
@@ -50,54 +43,26 @@ class ParquetPayloadReader(data: Array[Byte])
     }
 
     Try {
-      // Create a temporary file to store the Parquet data
-      val file = File.createTempFile("parquet_payload_", ".parquet")
-      file.deleteOnExit()
-      tempFile = Some(file)
+      // Create ByteArrayInputFile directly from byte array
+      val inputFile = new ByteArrayInputFile(data)
 
-      // Write the Parquet data to the temporary file
-      Using(new FileOutputStream(file)) { fos =>
-        fos.write(data)
-      }.get // Re-throw any exception from file writing
-
-      // logDebug(
-      //   s"Created temporary Parquet file at ${file.getAbsolutePath} with size ${data.length} bytes"
-      // )
-
-      // Open the Parquet file
-      val hadoopPath = new Path(file.getAbsolutePath)
-      val inputFile = HadoopInputFile.fromPath(hadoopPath, hadoopConfig)
       val parquetReader = ParquetFileReader.open(inputFile)
       reader = Some(parquetReader)
       schema = Some(parquetReader.getFooter.getFileMetaData.getSchema)
     }.recover {
       case e: IOException =>
         // logError(s"Error initializing Parquet reader: ${e.getMessage}", e)
-        cleanupTempFile()
         throw new IOException(
           s"Failed to initialize Parquet reader: ${e.getMessage}",
           e
         )
       case e: Exception =>
         // logError(s"Unexpected error parsing Parquet: ${e.getMessage}", e)
-        cleanupTempFile()
         throw new IOException(
           s"Unexpected error parsing Parquet: ${e.getMessage}",
           e
         )
     }.get
-  }
-
-  private def cleanupTempFile(): Unit = {
-    tempFile.filter(_.exists()).foreach { file =>
-      Try {
-        Files.delete(file.toPath)
-      }.recover { case e: IOException =>
-      // Log but continue - this is just cleanup
-      // logWarning(s"Failed to delete temporary file: ${e.getMessage}")
-      }
-    }
-    tempFile = None
   }
 
   /** Closes the reader and cleans up resources.
@@ -111,7 +76,6 @@ class ParquetPayloadReader(data: Array[Byte])
     }
     reader = None
     schema = None // Also clear the schema reference
-    cleanupTempFile()
   }
 
   def getBooleanFromPayload(columnIndex: Int): List[Boolean] = {

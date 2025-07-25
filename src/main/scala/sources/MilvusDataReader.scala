@@ -67,8 +67,8 @@ class MilvusPartitionReader(
 
   private val preloadExecutor =
     Executors.newFixedThreadPool(
-      options.s3PreloadPoolSize
-    ) // Increased to 16 threads
+      math.min(options.s3PreloadPoolSize, fieldFilesSeq.length)
+    )
   private implicit val executionContext: ExecutionContext =
     ExecutionContext.fromExecutor(preloadExecutor)
 
