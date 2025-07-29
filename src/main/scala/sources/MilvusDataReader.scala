@@ -121,7 +121,7 @@ class MilvusPartitionReader(
 
     override def open(): Unit = {
       try {
-        // 每个 reader 独立创建 FileSystem
+        // Each reader creates a separate FileSystem
         fileSystem = options.getFileSystem(path)
         inputStream = fileSystem.open(path)
         // Read descriptor event to get data type
@@ -160,11 +160,12 @@ class MilvusPartitionReader(
           LogReader.readInsertEvent(inputStream, objectMapper, dataType)
       }
 
-      insertEvent != null
+      // Ensure we have a valid event and currentIndex is within bounds
+      insertEvent != null && currentIndex < insertEvent.getDataSize()
     }
 
     private def hasNextDeleteEvent(): Boolean = {
-      if (deleteEvent != null && currentIndex == deleteEvent.pks.length - 1) {
+      if (deleteEvent != null && currentIndex >= deleteEvent.pks.length) {
         deleteEvent = null
         currentIndex = 0
       }
@@ -173,7 +174,8 @@ class MilvusPartitionReader(
           LogReader.readDeleteEvent(inputStream, objectMapper, dataType)
       }
 
-      deleteEvent != null
+      // Ensure we have a valid event and currentIndex is within bounds
+      deleteEvent != null && currentIndex < deleteEvent.pks.length
     }
 
     override def readNextRecord(): Any = {
@@ -198,6 +200,15 @@ class MilvusPartitionReader(
           s"Attempted to read from null insert event in file $filePath"
         )
       }
+
+      // Additional boundary check to prevent ArrayIndexOutOfBoundsException
+      if (currentIndex >= insertEvent.getDataSize()) {
+        throw new IllegalStateException(
+          s"Index out of bounds: currentIndex=$currentIndex, dataSize=${insertEvent
+              .getDataSize()} in file $filePath"
+        )
+      }
+
       val data = insertEvent.getData(currentIndex)
       data
     }
@@ -209,6 +220,14 @@ class MilvusPartitionReader(
           s"Attempted to read from null delete event in file $filePath"
         )
       }
+
+      // Additional boundary check to prevent ArrayIndexOutOfBoundsException
+      if (currentIndex >= deleteEvent.pks.length) {
+        throw new IllegalStateException(
+          s"Index out of bounds: currentIndex=$currentIndex, pks.length=${deleteEvent.pks.length} in file $filePath"
+        )
+      }
+
       val pk = deleteEvent.pks(currentIndex)
       pk
     }
@@ -890,6 +909,7 @@ class MilvusPartitionReader(
       }
     }
     backgroundPreloadTask = None
+    fieldFileReaders = Map.empty
 
     // Cancel preload futures if still running
     preloadFutures.values.foreach { future =>

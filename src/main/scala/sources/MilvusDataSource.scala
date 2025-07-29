@@ -284,17 +284,24 @@ class MilvusScanBuilder(
     })
     fieldNames = fieldNames.sortBy(fieldName => fieldName2ID(fieldName))
     logInfo(s"fieldNames after sort: $fieldNames")
+    if (fieldNames.isEmpty) {
+      fieldNames = fieldNames :+ "row_id"
+      logInfo(s"fieldNames after add row_id: $fieldNames")
+    }
 
     val tmpMap = new HashMap[String, String]()
     options.asScala.foreach { case (key, value) =>
       tmpMap.put(key, value)
     }
-    tmpMap.put(
-      MilvusOption.ReaderFieldIDs,
-      fieldNames
-        .map(fieldName => fieldName2ID(fieldName).toString)
-        .mkString(",")
-    )
+    // Only set ReaderFieldIDs if fieldNames is not empty
+    if (fieldNames.nonEmpty) {
+      tmpMap.put(
+        MilvusOption.ReaderFieldIDs,
+        fieldNames
+          .map(fieldName => fieldName2ID(fieldName).toString)
+          .mkString(",")
+      )
+    }
 
     currentOptions = new CaseInsensitiveStringMap(tmpMap)
     currentSchema = StructType(
@@ -387,7 +394,11 @@ class MilvusScan(
   }
   private val fieldIDs =
     if (options.get(MilvusOption.ReaderFieldIDs) != null) {
-      options.get(MilvusOption.ReaderFieldIDs).split(",").toSeq
+      options
+        .get(MilvusOption.ReaderFieldIDs)
+        .split(",")
+        .toSeq
+        .filter(_.nonEmpty)
     } else {
       Seq[String]()
     }
@@ -508,7 +519,11 @@ class MilvusScan(
     })
 
     if (fieldIDs.nonEmpty) {
+      logInfo(
+        s"Filtering filePathMap with fieldIDs: $fieldIDs, available fields: ${filePathMap.keys.mkString(", ")}"
+      )
       filePathMap = filePathMap.filter(entry => fieldIDs.contains(entry._1))
+      logInfo(s"After filtering: ${filePathMap.keys.mkString(", ")}")
     }
 
     // Sort the file names in ascending order for each field ID

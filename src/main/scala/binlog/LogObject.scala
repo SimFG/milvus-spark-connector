@@ -188,7 +188,6 @@ class InsertEventData(
     val baseEventData: BaseEventData,
     var timestamp: Long,
     var dataType: DataType,
-    // 原始类型数据存储
     var booleanData: ArrayBuffer[Boolean] = ArrayBuffer.empty[Boolean],
     var int8Data: ArrayBuffer[Byte] = ArrayBuffer.empty[Byte],
     var int16Data: ArrayBuffer[Short] = ArrayBuffer.empty[Short],
@@ -239,6 +238,14 @@ class InsertEventData(
   }
 
   def getData(index: Int): Any = {
+    // Boundary check to prevent ArrayIndexOutOfBoundsException
+    val dataSize = getDataSize()
+    if (index < 0 || index >= dataSize) {
+      throw new IndexOutOfBoundsException(
+        s"Index: $index, Size: $dataSize, DataType: $dataType"
+      )
+    }
+
     dataType match {
       case DataType.Bool   => booleanData(index)
       case DataType.Int8   => int8Data(index)
@@ -260,7 +267,6 @@ class InsertEventData(
     }
   }
 
-  // 获取指定索引数据的字符串表示
   def getDataString(index: Int): String = {
     dataType match {
       case DataType.Bool   => booleanData(index).toString
