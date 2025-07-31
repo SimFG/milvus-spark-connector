@@ -20,6 +20,12 @@ abstract class BinaryVectorExpression(left: Expression, right: Expression)
     (leftType, rightType) match {
       case (ArrayType(FloatType, _), ArrayType(FloatType, _)) => true
       case (ArrayType(DoubleType, _), ArrayType(DoubleType, _)) => true
+      case (ArrayType(IntegerType, _), ArrayType(IntegerType, _)) => true
+      case (ArrayType(LongType, _), ArrayType(LongType, _)) => true
+      case (ArrayType(DecimalType(), _), ArrayType(DecimalType(), _)) => true
+      case (ArrayType(FloatType, _), ArrayType(DoubleType, _)) => true
+      case (ArrayType(DoubleType, _), ArrayType(FloatType, _)) => true
+      case (ArrayType(_, _), ArrayType(_, _)) => true // Allow mixed numeric types
       case _ => false
     }
   }
@@ -27,7 +33,16 @@ abstract class BinaryVectorExpression(left: Expression, right: Expression)
   protected def extractFloatArray(value: Any): Array[Float] = {
     value match {
       case arrayData: ArrayData =>
-        arrayData.toFloatArray()
+        val size = arrayData.numElements()
+        val result = new Array[Float](size)
+        var i = 0
+        while (i < size) {
+          // Use null as elementType to let Spark handle the type inference
+          val element = if (i < size) arrayData.get(i, null) else null
+          result(i) = convertToFloat(element)
+          i += 1
+        }
+        result
       case _ => null
     }
   }
@@ -35,8 +50,41 @@ abstract class BinaryVectorExpression(left: Expression, right: Expression)
   protected def extractDoubleArray(value: Any): Array[Double] = {
     value match {
       case arrayData: ArrayData =>
-        arrayData.toDoubleArray()
+        val size = arrayData.numElements()
+        val result = new Array[Double](size)
+        var i = 0
+        while (i < size) {
+          // Use null as elementType to let Spark handle the type inference
+          val element = if (i < size) arrayData.get(i, null) else null
+          result(i) = convertToDouble(element)
+          i += 1
+        }
+        result
       case _ => null
+    }
+  }
+  
+  protected def convertToFloat(value: Any): Float = {
+    value match {
+      case f: Float => f
+      case d: Double => d.toFloat
+      case i: Int => i.toFloat
+      case l: Long => l.toFloat
+      case decimal: org.apache.spark.sql.types.Decimal => decimal.toDouble.toFloat
+      case null => 0.0f
+      case _ => throw new IllegalArgumentException(s"Cannot convert ${value.getClass} to Float: $value")
+    }
+  }
+  
+  protected def convertToDouble(value: Any): Double = {
+    value match {
+      case f: Float => f.toDouble
+      case d: Double => d
+      case i: Int => i.toDouble
+      case l: Long => l.toDouble
+      case decimal: org.apache.spark.sql.types.Decimal => decimal.toDouble
+      case null => 0.0
+      case _ => throw new IllegalArgumentException(s"Cannot convert ${value.getClass} to Double: $value")
     }
   }
 }
@@ -187,8 +235,29 @@ case class HammingDistanceExpression(left: Expression, right: Expression)
   private def extractByteArray(value: Any): Array[Byte] = {
     value match {
       case arrayData: ArrayData =>
-        arrayData.toByteArray()
+        val size = arrayData.numElements()
+        val result = new Array[Byte](size)
+        var i = 0
+        while (i < size) {
+          val element = arrayData.get(i, null)
+          result(i) = convertToByte(element)
+          i += 1
+        }
+        result
       case _ => null
+    }
+  }
+  
+  private def convertToByte(value: Any): Byte = {
+    value match {
+      case b: Byte => b
+      case i: Int => i.toByte
+      case l: Long => l.toByte
+      case f: Float => f.toByte
+      case d: Double => d.toByte
+      case decimal: org.apache.spark.sql.types.Decimal => decimal.toInt.toByte
+      case null => 0.toByte
+      case _ => throw new IllegalArgumentException(s"Cannot convert ${value.getClass} to Byte: $value")
     }
   }
   
@@ -234,8 +303,29 @@ case class JaccardDistanceExpression(left: Expression, right: Expression)
   private def extractByteArray(value: Any): Array[Byte] = {
     value match {
       case arrayData: ArrayData =>
-        arrayData.toByteArray()
+        val size = arrayData.numElements()
+        val result = new Array[Byte](size)
+        var i = 0
+        while (i < size) {
+          val element = arrayData.get(i, null)
+          result(i) = convertToByte(element)
+          i += 1
+        }
+        result
       case _ => null
+    }
+  }
+  
+  private def convertToByte(value: Any): Byte = {
+    value match {
+      case b: Byte => b
+      case i: Int => i.toByte
+      case l: Long => l.toByte
+      case f: Float => f.toByte
+      case d: Double => d.toByte
+      case decimal: org.apache.spark.sql.types.Decimal => decimal.toInt.toByte
+      case null => 0.toByte
+      case _ => throw new IllegalArgumentException(s"Cannot convert ${value.getClass} to Byte: $value")
     }
   }
   
