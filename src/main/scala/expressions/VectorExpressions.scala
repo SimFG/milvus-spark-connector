@@ -7,7 +7,7 @@ import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.ml.linalg.{Vector, DenseVector, SparseVector, Vectors}
-import org.apache.spark.mllib.linalg.{Vector => OldVector, DenseVector => OldDenseVector, SparseVector => OldSparseVector, Vectors => OldVectors}
+import org.apache.spark.mllib.linalg.{Vector => OldVector, DenseVector => OldDenseVector, SparseVector => OldSparseVector}
 
 /**
  * Base trait for binary vector expressions
@@ -20,20 +20,12 @@ abstract class BinaryVectorExpression(left: Expression, right: Expression)
   
   protected def validateVectorTypes(leftType: DataType, rightType: DataType): Boolean = {
     import org.apache.spark.ml.linalg.SQLDataTypes.VectorType
-    import org.apache.spark.mllib.linalg.SQLDataTypes.{VectorType => OldVectorType}
     
     (leftType, rightType) match {
       // Spark ML Vector types (preferred)
       case (VectorType, VectorType) => true
       case (VectorType, ArrayType(_, _)) => true
       case (ArrayType(_, _), VectorType) => true
-      
-      // Spark MLlib Vector types (legacy but still supported)
-      case (OldVectorType, OldVectorType) => true
-      case (OldVectorType, ArrayType(_, _)) => true
-      case (ArrayType(_, _), OldVectorType) => true
-      case (VectorType, OldVectorType) => true
-      case (OldVectorType, VectorType) => true
       
       // Array types (fallback)
       case (ArrayType(FloatType, _), ArrayType(FloatType, _)) => true
@@ -143,19 +135,18 @@ case class CosineSimilarityExpression(left: Expression, right: Expression)
   }
   
   private def computeCosineSimilarity(v1: Vector, v2: Vector): Double = {
-    import org.apache.spark.ml.linalg.BLAS
-    
     if (v1.size != v2.size) return 0.0
     
-    // Use optimized BLAS operations for dot product
-    val dotProduct = BLAS.dot(v1, v2)
+    // Use optimized Vector methods like VectorBruteForceSearch
+    val dotProduct = v1.dot(v2)
+    val normV1 = Vectors.norm(v1, 2.0)
+    val normV2 = Vectors.norm(v2, 2.0)
     
-    // Calculate norms using optimized operations
-    val normV1 = math.sqrt(BLAS.dot(v1, v1))
-    val normV2 = math.sqrt(BLAS.dot(v2, v2))
-    
-    val normProduct = normV1 * normV2
-    if (normProduct == 0.0) 0.0 else dotProduct / normProduct
+    if (normV1 == 0.0 || normV2 == 0.0) {
+      0.0
+    } else {
+      dotProduct / (normV1 * normV2)
+    }
   }
   
   override def prettyName: String = "cosine_similarity"
@@ -184,16 +175,17 @@ case class L2DistanceExpression(left: Expression, right: Expression)
   }
   
   private def computeL2Distance(v1: Vector, v2: Vector): Double = {
-    import org.apache.spark.ml.linalg.BLAS
-    
     if (v1.size != v2.size) return Double.MaxValue
     
-    // Create difference vector
-    val diff = v1.copy
-    BLAS.axpy(-1.0, v2, diff) // diff = v1 - v2
-    
-    // Calculate L2 norm of difference
-    math.sqrt(BLAS.dot(diff, diff))
+    // Use efficient element-wise access like VectorBruteForceSearch
+    var sum = 0.0
+    var i = 0
+    while (i < v1.size) {
+      val diff = v1(i) - v2(i)
+      sum += diff * diff
+      i += 1
+    }
+    math.sqrt(sum)
   }
   
   override def prettyName: String = "l2_distance"
@@ -222,12 +214,10 @@ case class InnerProductExpression(left: Expression, right: Expression)
   }
   
   private def computeInnerProduct(v1: Vector, v2: Vector): Double = {
-    import org.apache.spark.ml.linalg.BLAS
-    
     if (v1.size != v2.size) return 0.0
     
-    // Use optimized BLAS dot product
-    BLAS.dot(v1, v2)
+    // Use optimized Vector dot product like VectorBruteForceSearch
+    v1.dot(v2)
   }
   
   override def prettyName: String = "inner_product"
