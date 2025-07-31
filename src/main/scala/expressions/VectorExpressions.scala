@@ -37,8 +37,8 @@ abstract class BinaryVectorExpression(left: Expression, right: Expression)
         val result = new Array[Float](size)
         var i = 0
         while (i < size) {
-          // Use null as elementType to let Spark handle the type inference
-          val element = if (i < size) arrayData.get(i, null) else null
+          // Get element without specifying type - let ArrayData handle it
+          val element = arrayData.get(i, org.apache.spark.sql.types.FloatType)
           result(i) = convertToFloat(element)
           i += 1
         }
@@ -54,8 +54,8 @@ abstract class BinaryVectorExpression(left: Expression, right: Expression)
         val result = new Array[Double](size)
         var i = 0
         while (i < size) {
-          // Use null as elementType to let Spark handle the type inference
-          val element = if (i < size) arrayData.get(i, null) else null
+          // Get element with DoubleType
+          val element = arrayData.get(i, org.apache.spark.sql.types.DoubleType)
           result(i) = convertToDouble(element)
           i += 1
         }
@@ -239,7 +239,7 @@ case class HammingDistanceExpression(left: Expression, right: Expression)
         val result = new Array[Byte](size)
         var i = 0
         while (i < size) {
-          val element = arrayData.get(i, null)
+          val element = arrayData.get(i, org.apache.spark.sql.types.ByteType)
           result(i) = convertToByte(element)
           i += 1
         }
@@ -307,7 +307,7 @@ case class JaccardDistanceExpression(left: Expression, right: Expression)
         val result = new Array[Byte](size)
         var i = 0
         while (i < size) {
-          val element = arrayData.get(i, null)
+          val element = arrayData.get(i, org.apache.spark.sql.types.ByteType)
           result(i) = convertToByte(element)
           i += 1
         }
