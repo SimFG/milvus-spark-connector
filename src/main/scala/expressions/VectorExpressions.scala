@@ -12,8 +12,13 @@ import org.apache.spark.mllib.linalg.{Vector => OldVector, DenseVector => OldDen
 /**
  * Base trait for binary vector expressions
  */
-abstract class BinaryVectorExpression(left: Expression, right: Expression)
-  extends BinaryExpression with CodegenFallback {
+abstract class BinaryVectorExpression(
+    _left: Expression,
+    _right: Expression)
+  extends BinaryExpression with CodegenFallback with Serializable {
+  
+  override def left: Expression = _left
+  override def right: Expression = _right
   
   override def dataType: DataType = DoubleType
   override def nullable: Boolean = true
@@ -115,13 +120,15 @@ abstract class BinaryVectorExpression(left: Expression, right: Expression)
 /**
  * Cosine Similarity Expression
  */
-case class CosineSimilarityExpression(left: Expression, right: Expression)
-  extends BinaryVectorExpression(left, right) {
+case class CosineSimilarityExpression(
+    _left: Expression,
+    _right: Expression)
+  extends BinaryVectorExpression(_left, _right) with Serializable {
   
   override protected def withNewChildrenInternal(
     newLeft: Expression, 
     newRight: Expression
-  ): Expression = copy(left = newLeft, right = newRight)
+  ): Expression = copy(_left = newLeft, _right = newRight)
   
   override def nullSafeEval(leftValue: Any, rightValue: Any): Any = {
     val leftVector = extractVector(leftValue)
@@ -155,13 +162,15 @@ case class CosineSimilarityExpression(left: Expression, right: Expression)
 /**
  * L2 Distance Expression
  */
-case class L2DistanceExpression(left: Expression, right: Expression)
-  extends BinaryVectorExpression(left, right) {
+case class L2DistanceExpression(
+    _left: Expression,
+    _right: Expression)
+  extends BinaryVectorExpression(_left, _right) with Serializable {
   
   override protected def withNewChildrenInternal(
     newLeft: Expression, 
     newRight: Expression
-  ): Expression = copy(left = newLeft, right = newRight)
+  ): Expression = copy(_left = newLeft, _right = newRight)
   
   override def nullSafeEval(leftValue: Any, rightValue: Any): Any = {
     val leftVector = extractVector(leftValue)
@@ -194,13 +203,15 @@ case class L2DistanceExpression(left: Expression, right: Expression)
 /**
  * Inner Product Expression
  */
-case class InnerProductExpression(left: Expression, right: Expression)
-  extends BinaryVectorExpression(left, right) {
+case class InnerProductExpression(
+    _left: Expression,
+    _right: Expression)
+  extends BinaryVectorExpression(_left, _right) with Serializable {
   
   override protected def withNewChildrenInternal(
     newLeft: Expression, 
     newRight: Expression
-  ): Expression = copy(left = newLeft, right = newRight)
+  ): Expression = copy(_left = newLeft, _right = newRight)
   
   override def nullSafeEval(leftValue: Any, rightValue: Any): Any = {
     val leftVector = extractVector(leftValue)
@@ -226,13 +237,15 @@ case class InnerProductExpression(left: Expression, right: Expression)
 /**
  * Hamming Distance Expression for binary vectors
  */
-case class HammingDistanceExpression(left: Expression, right: Expression)
-  extends BinaryVectorExpression(left, right) {
+case class HammingDistanceExpression(
+    _left: Expression,
+    _right: Expression)
+  extends BinaryVectorExpression(_left, _right) with Serializable {
   
   override protected def withNewChildrenInternal(
     newLeft: Expression, 
     newRight: Expression
-  ): Expression = copy(left = newLeft, right = newRight)
+  ): Expression = copy(_left = newLeft, _right = newRight)
   
   override def nullSafeEval(leftValue: Any, rightValue: Any): Any = {
     val leftArray = extractByteArray(leftValue)
@@ -294,13 +307,15 @@ case class HammingDistanceExpression(left: Expression, right: Expression)
 /**
  * Jaccard Distance Expression for binary vectors
  */
-case class JaccardDistanceExpression(left: Expression, right: Expression)
-  extends BinaryVectorExpression(left, right) {
+case class JaccardDistanceExpression(
+    _left: Expression,
+    _right: Expression)
+  extends BinaryVectorExpression(_left, _right) with Serializable {
   
   override protected def withNewChildrenInternal(
     newLeft: Expression, 
     newRight: Expression
-  ): Expression = copy(left = newLeft, right = newRight)
+  ): Expression = copy(_left = newLeft, _right = newRight)
   
   override def nullSafeEval(leftValue: Any, rightValue: Any): Any = {
     val leftArray = extractByteArray(leftValue)
@@ -372,7 +387,7 @@ case class VectorKNNExpression(
   queryVector: Expression, 
   k: Expression,
   distanceType: Expression
-) extends Expression with CodegenFallback {
+) extends Expression with CodegenFallback with Serializable {
   
   override protected def withNewChildrenInternal(
     newChildren: IndexedSeq[Expression]
