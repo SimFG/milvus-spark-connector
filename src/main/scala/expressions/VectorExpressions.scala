@@ -20,6 +20,12 @@ abstract class BinaryVectorExpression(
   override def left: Expression = _left
   override def right: Expression = _right
   
+  // Thread-local cache for vector conversions to avoid repeated conversions
+  @transient private var cachedLeftVector: Vector = _
+  @transient private var cachedRightVector: Vector = _
+  @transient private var lastLeftValue: Any = _
+  @transient private var lastRightValue: Any = _
+  
   override def dataType: DataType = DoubleType
   override def nullable: Boolean = true
   
@@ -57,20 +63,60 @@ abstract class BinaryVectorExpression(
           case sparse: OldSparseVector => Vectors.sparse(sparse.size, sparse.indices, sparse.values)
         }
       
-      // Array data - convert to DenseVector
+      // Array data - convert to DenseVector (optimized)
       case arrayData: ArrayData =>
-        val size = arrayData.numElements()
-        val values = new Array[Double](size)
-        var i = 0
+        extractVectorFromArrayData(arrayData)
+        
+      case _ => null
+    }
+  }
+  
+  // Cached vector extraction with reference equality check
+  protected def extractVectorCached(value: Any, isLeft: Boolean): Vector = {
+    if (isLeft) {
+      if (lastLeftValue != null && (lastLeftValue.asInstanceOf[AnyRef] eq value.asInstanceOf[AnyRef])) {
+        cachedLeftVector
+      } else {
+        cachedLeftVector = extractVector(value)
+        lastLeftValue = value
+        cachedLeftVector
+      }
+    } else {
+      if (lastRightValue != null && (lastRightValue.asInstanceOf[AnyRef] eq value.asInstanceOf[AnyRef])) {
+        cachedRightVector
+      } else {
+        cachedRightVector = extractVector(value)
+        lastRightValue = value
+        cachedRightVector
+      }
+    }
+  }
+  
+  // Optimized method to extract vector from ArrayData
+  private def extractVectorFromArrayData(arrayData: ArrayData): Vector = {
+    val size = arrayData.numElements()
+    val values = new Array[Double](size)
+    
+    // Optimized extraction - try double first, then fallback
+    var i = 0
+    try {
+      // Assume most arrays are double arrays
+      while (i < size) {
+        values(i) = arrayData.getDouble(i)
+        i += 1
+      }
+    } catch {
+      case _: Exception =>
+        // Fallback to generic approach
+        i = 0
         while (i < size) {
           val element = arrayData.get(i, org.apache.spark.sql.types.DoubleType)
           values(i) = convertToDouble(element)
           i += 1
         }
-        Vectors.dense(values)
-        
-      case _ => null
     }
+    
+    Vectors.dense(values)
   }
   
   // Keep the old method for backward compatibility
@@ -131,8 +177,8 @@ case class CosineSimilarityExpression(
   ): Expression = copy(_left = newLeft, _right = newRight)
   
   override def nullSafeEval(leftValue: Any, rightValue: Any): Any = {
-    val leftVector = extractVector(leftValue)
-    val rightVector = extractVector(rightValue)
+    val leftVector = extractVectorCached(leftValue, isLeft = true)
+    val rightVector = extractVectorCached(rightValue, isLeft = false)
     
     if (leftVector == null || rightVector == null || leftVector.size != rightVector.size) {
       null
@@ -144,15 +190,30 @@ case class CosineSimilarityExpression(
   private def computeCosineSimilarity(v1: Vector, v2: Vector): Double = {
     if (v1.size != v2.size) return 0.0
     
-    // Use optimized Vector methods like VectorBruteForceSearch
-    val dotProduct = v1.dot(v2)
-    val normV1 = Vectors.norm(v1, 2.0)
-    val normV2 = Vectors.norm(v2, 2.0)
+    // Optimized computation using raw arrays for better performance
+    val arr1 = v1.toArray
+    val arr2 = v2.toArray
+    val size = arr1.length
     
-    if (normV1 == 0.0 || normV2 == 0.0) {
+    var dotProduct = 0.0
+    var norm1Sq = 0.0
+    var norm2Sq = 0.0
+    
+    // Single loop to compute all values
+    var i = 0
+    while (i < size) {
+      val v1Val = arr1(i)
+      val v2Val = arr2(i)
+      dotProduct += v1Val * v2Val
+      norm1Sq += v1Val * v1Val
+      norm2Sq += v2Val * v2Val
+      i += 1
+    }
+    
+    if (norm1Sq == 0.0 || norm2Sq == 0.0) {
       0.0
     } else {
-      dotProduct / (normV1 * normV2)
+      dotProduct / (math.sqrt(norm1Sq) * math.sqrt(norm2Sq))
     }
   }
   
@@ -173,8 +234,8 @@ case class L2DistanceExpression(
   ): Expression = copy(_left = newLeft, _right = newRight)
   
   override def nullSafeEval(leftValue: Any, rightValue: Any): Any = {
-    val leftVector = extractVector(leftValue)
-    val rightVector = extractVector(rightValue)
+    val leftVector = extractVectorCached(leftValue, isLeft = true)
+    val rightVector = extractVectorCached(rightValue, isLeft = false)
     
     if (leftVector == null || rightVector == null || leftVector.size != rightVector.size) {
       null
@@ -186,11 +247,15 @@ case class L2DistanceExpression(
   private def computeL2Distance(v1: Vector, v2: Vector): Double = {
     if (v1.size != v2.size) return Double.MaxValue
     
-    // Use efficient element-wise access like VectorBruteForceSearch
+    // Optimized computation using raw arrays for better performance
+    val arr1 = v1.toArray
+    val arr2 = v2.toArray
+    val size = arr1.length
+    
     var sum = 0.0
     var i = 0
-    while (i < v1.size) {
-      val diff = v1(i) - v2(i)
+    while (i < size) {
+      val diff = arr1(i) - arr2(i)
       sum += diff * diff
       i += 1
     }
