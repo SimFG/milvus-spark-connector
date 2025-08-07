@@ -44,6 +44,7 @@ import io.milvus.grpc.schema.{DataType => MilvusDataType}
 class MilvusPartitionReader(
     schema: StructType,
     fieldFilesSeq: Seq[Map[String, String]],
+    partition: String,
     options: MilvusS3Option,
     pushedFilters: Array[Filter] = Array.empty[Filter]
 ) extends PartitionReader[InternalRow]
@@ -576,8 +577,15 @@ class MilvusPartitionReader(
       )
     }
 
+    // Determine the row size - add 1 extra column if partition is not empty
+    val rowSize = if (partition != null && partition.nonEmpty) {
+      currentReaders.size + 1
+    } else {
+      currentReaders.size
+    }
+
     // Create a new InternalRow with the correct number of fields
-    val row = InternalRow.fromSeq(Seq.fill(currentReaders.size)(null))
+    val row = InternalRow.fromSeq(Seq.fill(rowSize)(null))
 
     // Read one record from each field reader and set the corresponding field in the row
     // Ensure the order matches the schema's field order
@@ -614,6 +622,11 @@ class MilvusPartitionReader(
           logError(s"No reader found for schema field: $fieldID")
           row.setNullAt(index) // Set null if reader is missing
       }
+    }
+
+    // Add partition column value if partition is not empty
+    if (partition != null && partition.nonEmpty) {
+      row.update(currentReaders.size, UTF8String.fromString(partition))
     }
 
     row // Return the populated row
@@ -736,8 +749,15 @@ class MilvusPartitionReader(
       )
     }
 
+    // Determine the row size - add 1 extra column if partition is not empty
+    val rowSize = if (partition != null && partition.nonEmpty) {
+      currentReaders.size + 1
+    } else {
+      currentReaders.size
+    }
+
     // Create a new InternalRow with the correct number of fields
-    val row = InternalRow.fromSeq(Seq.fill(currentReaders.size)(null))
+    val row = InternalRow.fromSeq(Seq.fill(rowSize)(null))
 
     // Read one record from each field reader and set the corresponding field in the row
     // Ensure the order matches the schema's field order
@@ -773,6 +793,11 @@ class MilvusPartitionReader(
           logError(s"No reader found for schema field: $fieldID")
           row.setNullAt(index) // Set null if reader is missing
       }
+    }
+
+    // Add partition column value if partition is not empty
+    if (partition != null && partition.nonEmpty) {
+      row.update(currentReaders.size, UTF8String.fromString(partition))
     }
 
     row // Return the populated row

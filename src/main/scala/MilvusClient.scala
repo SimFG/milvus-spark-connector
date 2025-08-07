@@ -694,6 +694,34 @@ class MilvusClient(params: MilvusConnectionParams) {
     }
   }
 
+  def getPartitionInfos(
+      dbName: String,
+      collectionName: String
+  ): Try[Seq[MilvusPartitionInfo]] = {
+    try {
+      val partitionInfos = stub.showPartitions(
+        ShowPartitionsRequest(
+          dbName = dbName,
+          collectionName = collectionName
+        )
+      )
+      Success(
+        partitionInfos.partitionIDs.zip(partitionInfos.partitionNames).map {
+          case (id, name) =>
+            MilvusPartitionInfo(
+              partitionID = id,
+              partitionName = name
+            )
+        }
+      )
+    } catch {
+      case e: Exception =>
+        Failure(
+          new Exception(s"Failed to get partition infos: ${e.getMessage}")
+        )
+    }
+  }
+
   def close(): Unit = {
     channel.shutdownNow()
   }
@@ -760,6 +788,11 @@ case class MilvusSegmentLogInfo(
     segmentID: Long,
     insertLogIDs: Seq[String], // "/field_id/log_id"
     deleteLogIDs: Seq[String] // "/log_id"
+)
+
+case class MilvusPartitionInfo(
+    partitionID: Long,
+    partitionName: String
 )
 
 case class GetSegmentsInfoReq(

@@ -29,7 +29,8 @@ case class MilvusOption(
     partitionID: String = "",
     segmentID: String = "",
     fieldID: String = "",
-    fieldIDs: String = ""
+    fieldIDs: String = "",
+    extraColumns: Seq[String] = Seq.empty
 )
 
 object MilvusOption {
@@ -51,6 +52,9 @@ object MilvusOption {
   val MilvusInsertMaxBatchSize = "milvus.insertMaxBatchSize"
   val MilvusRetryCount = "milvus.retry.count"
   val MilvusRetryInterval = "milvus.retry.interval"
+
+  val MilvusExtraColumns = "milvus.extra.columns"
+  val MilvusExtraColumnPartition = "partition"
 
   // reader config
   val ReaderPath = Constants.LogReaderPathParamName
@@ -90,6 +94,12 @@ object MilvusOption {
     val retryInterval =
       options.getOrDefault(MilvusRetryInterval, "1000").toInt
     val fieldIDs = options.getOrDefault(ReaderFieldIDs, "")
+    val extraColumns = options
+      .getOrDefault(MilvusExtraColumns, "")
+      .split(",")
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .toSeq
 
     MilvusOption(
       uri,
@@ -109,7 +119,8 @@ object MilvusOption {
       partitionID,
       segmentID,
       fieldID,
-      fieldIDs
+      fieldIDs,
+      extraColumns
     )
   }
 

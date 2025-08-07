@@ -66,6 +66,7 @@ import com.zilliz.spark.connector.{
   MilvusS3Option,
   MilvusSegmentInfo
 }
+import com.zilliz.spark.connector.MilvusPartitionInfo
 
 // 1. DataSourceRegister and TableProvider
 case class MilvusDataSource() extends TableProvider with DataSourceRegister {
@@ -207,12 +208,10 @@ case class MilvusTable(
         field.fieldID
       }
     }
-    if (fieldIDs.isEmpty || fieldIDs.contains("0")) {
+    if (fieldIDs.isEmpty || fieldIDs.contains("0"))
       fields = fields :+ StructField("row_id", LongType, false)
-    }
-    if (fieldIDs.isEmpty || fieldIDs.contains("1")) {
+    if (fieldIDs.isEmpty || fieldIDs.contains("1"))
       fields = fields :+ StructField("timestamp", LongType, false)
-    }
     fields = fields ++ milvusCollection.schema.fields
       .filter(field =>
         fieldIDs.isEmpty || fieldIDs.contains(fieldName2ID(field.name).toString)
@@ -228,9 +227,14 @@ case class MilvusTable(
     if (
       milvusCollection.schema.enableDynamicField &&
       (fieldIDs.isEmpty || fieldIDs.contains((maxFieldID + 1).toString))
-    ) {
+    )
       fields = fields :+ StructField("$meta", StringType, true)
-    }
+    if (
+      milvusOption.extraColumns.contains(
+        MilvusOption.MilvusExtraColumnPartition
+      )
+    )
+      fields = fields :+ StructField("partition", StringType, true)
     StructType(fields)
   }
 
@@ -260,6 +264,12 @@ class MilvusScanBuilder(
     with Logging {
   private var currentSchema = schema
   private var currentOptions = options
+  private val extraColumns = options
+    .getOrDefault(MilvusOption.MilvusExtraColumns, "")
+    .split(",")
+    .map(_.trim)
+    .filter(_.nonEmpty)
+    .toSeq
 
   // Store the filters that can be pushed down
   private var pushedFilterArray: Array[Filter] = Array.empty[Filter]
@@ -269,13 +279,16 @@ class MilvusScanBuilder(
       return
     }
     val fieldName2ID = mutable.Map[String, Long]()
-    schema.fields.zipWithIndex.foreach { case (field, index) =>
-      if (index < 2) {
-        fieldName2ID(field.name) = index
-      } else {
-        fieldName2ID(field.name) = index + 98
+    schema.fields
+      .filterNot(f => extraColumns.contains(f.name))
+      .zipWithIndex
+      .foreach { case (field, index) =>
+        if (index < 2) {
+          fieldName2ID(field.name) = index
+        } else {
+          fieldName2ID(field.name) = index + 98
+        }
       }
-    }
     var fieldNames = Seq[String]()
     requiredSchema.fields.foreach(field => {
       if (fieldName2ID.contains(field.name)) {
@@ -301,6 +314,12 @@ class MilvusScanBuilder(
           .map(fieldName => fieldName2ID(fieldName).toString)
           .mkString(",")
       )
+    }
+    if (
+      extraColumns.contains(MilvusOption.MilvusExtraColumnPartition) &&
+      !fieldNames.contains("partition")
+    ) {
+      fieldNames = fieldNames :+ "partition"
     }
 
     currentOptions = new CaseInsensitiveStringMap(tmpMap)
@@ -555,6 +574,25 @@ class MilvusScan(
       .map(_.segmentID.toString)
   }
 
+  def getPartitionInfos(
+      client: MilvusClient
+  ): Map[String, String] = {
+    val result = client.getPartitionInfos(
+      milvusOption.databaseName,
+      milvusOption.collectionName
+    )
+    result
+      .getOrElse(
+        throw new Exception(
+          s"Failed to get partition infos: ${result.failed.get.getMessage}"
+        )
+      )
+      .map(partition => {
+        partition.partitionID.toString -> partition.partitionName
+      })
+      .toMap
+  }
+
   override def toBatch: Batch = this
 
   override def planInputPartitions(): Array[InputPartition] = {
@@ -573,6 +611,17 @@ class MilvusScan(
     if (segment.isEmpty()) {
       validSegments = getValidSegments(client)
     }
+    val containExtraPartition =
+      milvusOption.extraColumns.contains(
+        MilvusOption.MilvusExtraColumnPartition
+      )
+    var partitionInfos =
+      if (containExtraPartition) {
+        getPartitionInfos(client)
+      } else {
+        Map[String, String]()
+      }
+    var segment2Partition = mutable.Map[String, String]()
 
     var fieldMaps = mutable.Map[String, Seq[Map[String, String]]]()
     if (rawPath.isEmpty) {
@@ -589,16 +638,21 @@ class MilvusScan(
       } else {
         var partitionStatuses = getCollectionOrPartitionStatuses(fs, rootPath)
         partitionStatuses.foreach(status => {
+          val partitionID = status.getPath().getName
           val segmentStatuses =
             getCollectionOrPartitionStatuses(fs, status.getPath())
           segmentStatuses
             .filter(status => validSegments.contains(status.getPath().getName))
             .foreach(status => {
-              fieldMaps(status.getPath().getName) = getSegmentFieldMap(
+              val segmentID = status.getPath().getName
+              fieldMaps(segmentID) = getSegmentFieldMap(
                 fs,
                 client,
                 status.getPath()
               )
+              segment2Partition(
+                segmentID
+              ) = partitionID
             })
         })
       }
@@ -606,9 +660,17 @@ class MilvusScan(
       fieldMaps(rootPath.getName()) = getSegmentFieldMap(fs, client, rootPath)
     }
 
-    val result = fieldMaps.values
-      .map(fieldMap => MilvusInputPartition(fieldMap): InputPartition)
-      .toArray
+    val result = fieldMaps.map { case (segment, fieldMap) =>
+      MilvusInputPartition(
+        fieldMap,
+        if (containExtraPartition)
+          partitionInfos.getOrElse(
+            segment2Partition.getOrElse(segment, "unknown"),
+            "unknown"
+          )
+        else ""
+      ): InputPartition
+    }.toArray
     fs.close()
     client.close()
     result
@@ -654,8 +716,10 @@ case class MilvusDataWriterFactory(
 
 case class MilvusCommitMessage(rowCount: Int) extends WriterCommitMessage
 
-case class MilvusInputPartition(fieldFiles: Seq[Map[String, String]])
-    extends InputPartition
+case class MilvusInputPartition(
+    fieldFiles: Seq[Map[String, String]],
+    partition: String = ""
+) extends InputPartition
 
 class MilvusReaderFactory(
     schema: StructType,
@@ -673,6 +737,7 @@ class MilvusReaderFactory(
     new MilvusPartitionReader(
       schema,
       milvusPartition.fieldFiles,
+      milvusPartition.partition,
       readerOptions,
       pushedFilters
     )
